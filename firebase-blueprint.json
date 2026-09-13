@@ -1,0 +1,120 @@
+{
+  "entities": {
+    "Profile": {
+      "title": "User Profile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fullName", "email", "role"]
+    },
+    "Subject": {
+      "title": "Subject",
+      "description": "Educational subject for exams",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "nameBn": { "type": "string" },
+        "icon": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "nameBn"]
+    },
+    "Exam": {
+      "title": "Exam / Model Test",
+      "description": "A timed MCQ examination",
+      "type": "object",
+      "properties": {
+        "subjectId": { "type": "string" },
+        "title": { "type": "string" },
+        "serialNumber": { "type": "integer" },
+        "durationMinutes": { "type": "integer" },
+        "totalMarks": { "type": "integer" },
+        "negativeMark": { "type": "number" },
+        "instructions": { "type": "string" },
+        "isPublished": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["subjectId", "title", "durationMinutes", "totalMarks"]
+    },
+    "Question": {
+      "title": "MCQ Question",
+      "description": "An MCQ question belonging to an exam",
+      "type": "object",
+      "properties": {
+        "examId": { "type": "string" },
+        "stimulus": { "type": "string" },
+        "uddipok": { "type": "string" },
+        "questionText": { "type": "string" },
+        "optionA": { "type": "string" },
+        "optionB": { "type": "string" },
+        "optionC": { "type": "string" },
+        "optionD": { "type": "string" },
+        "correctOption": { "type": "string", "enum": ["a", "b", "c", "d"] },
+        "explanation": { "type": "string" },
+        "serialNumber": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["examId", "questionText", "optionA", "optionB", "optionC", "optionD", "correctOption"]
+    },
+    "Attempt": {
+      "title": "Exam Attempt",
+      "description": "Record of a student taking an exam",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "examId": { "type": "string" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "score": { "type": "number" },
+        "totalAttempted": { "type": "integer" },
+        "correctCount": { "type": "integer" },
+        "wrongCount": { "type": "integer" }
+      },
+      "required": ["studentId", "examId", "startedAt"]
+    },
+    "AttemptAnswer": {
+      "title": "Student Answer",
+      "description": "Individual answer in an exam attempt",
+      "type": "object",
+      "properties": {
+        "attemptId": { "type": "string" },
+        "questionId": { "type": "string" },
+        "selectedOption": { "type": "string", "enum": ["a", "b", "c", "d"] },
+        "isCorrect": { "type": "boolean" }
+      },
+      "required": ["attemptId", "questionId"]
+    }
+  },
+  "firestore": {
+    "/profiles/{profileId}": {
+      "schema": "Profile",
+      "description": "User profiles"
+    },
+    "/subjects/{subjectId}": {
+      "schema": "Subject",
+      "description": "Available subjects"
+    },
+    "/exams/{examId}": {
+      "schema": "Exam",
+      "description": "Exams per subject"
+    },
+    "/questions/{questionId}": {
+      "schema": "Question",
+      "description": "MCQ questions"
+    },
+    "/attempts/{attemptId}": {
+      "schema": "Attempt",
+      "description": "Student exam attempts"
+    },
+    "/attempt_answers/{answerId}": {
+      "schema": "AttemptAnswer",
+      "description": "Individual answers for attempts"
+    }
+  }
+}

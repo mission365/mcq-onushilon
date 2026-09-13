@@ -1,0 +1,187 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'mission.use01@gmail.com' ||
+        (
+          exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin'
+        )
+      );
+    }
+
+    function isValidProfile(data) {
+      return data.keys().hasAll(['fullName', 'email', 'role']) &&
+        data.fullName is string &&
+        data.fullName.size() <= 200 &&
+        data.email is string &&
+        data.email.size() <= 200 &&
+        data.role in ['student', 'admin'];
+    }
+
+    function isValidSubject(data) {
+      return data.keys().hasAll(['name', 'nameBn']) &&
+        data.name is string &&
+        data.name.size() <= 200 &&
+        data.nameBn is string &&
+        data.nameBn.size() <= 200 &&
+        (
+          !data.keys().hasAny(['unlockPrice']) ||
+          (data.unlockPrice is number && data.unlockPrice >= 0)
+        ) &&
+        (
+          !data.keys().hasAny(['isActive']) ||
+          data.isActive is bool
+        );
+    }
+
+    function hasSubjectAccess(subjectId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)/subject_access/$(subjectId));
+    }
+
+    function isFreeExam(serialNumber) {
+      return serialNumber is number && serialNumber <= 3;
+    }
+
+    function isValidManualPaymentCreate(data) {
+      return data.keys().hasAll([
+          'userId',
+          'subjectId',
+          'subjectName',
+          'gateway',
+          'paymentMethod',
+          'amount',
+          'currency',
+          'senderBkashNumber',
+          'receiverBkashNumber',
+          'transactionId',
+          'status'
+        ]) &&
+        data.userId is string &&
+        data.userId == request.auth.uid &&
+        data.subjectId is string &&
+        data.subjectName is string &&
+        data.gateway == 'bkash' &&
+        data.paymentMethod == 'manual' &&
+        data.amount is number &&
+        data.amount >= 0 &&
+        data.currency == 'BDT' &&
+        data.senderBkashNumber is string &&
+        data.receiverBkashNumber is string &&
+        data.transactionId is string &&
+        data.status == 'submitted';
+    }
+
+    function canAccessExamFields(subjectId, serialNumber) {
+      return isAdmin() ||
+        (isSignedIn() && (isFreeExam(serialNumber) || hasSubjectAccess(subjectId)));
+    }
+
+    function canAccessExamById(examId) {
+      return exists(/databases/$(database)/documents/exams/$(examId)) &&
+        canAccessExamFields(
+          get(/databases/$(database)/documents/exams/$(examId)).data.subjectId,
+          get(/databases/$(database)/documents/exams/$(examId)).data.serialNumber
+        );
+    }
+
+    function canAccessQuestion(questionData) {
+      return isAdmin() || (
+        isSignedIn() && (
+          (questionData.examId is string && canAccessExamById(questionData.examId)) ||
+          (questionData.exam_id is string && canAccessExamById(questionData.exam_id))
+        )
+      );
+    }
+
+    match /profiles/{userId} {
+      allow get: if isUser(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isSignedIn() &&
+        isUser(userId) &&
+        isValidProfile(request.resource.data) &&
+        request.resource.data.role == 'student';
+      allow update: if (isUser(userId) || isAdmin()) &&
+        (
+          (
+            request.auth.token.email == 'mission.use01@gmail.com' &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+          ) ||
+          (
+            isValidProfile(request.resource.data) &&
+            (isAdmin() || request.resource.data.role == resource.data.role)
+          )
+        );
+    }
+
+    match /profiles/{userId}/subject_access/{subjectId} {
+      allow get, list: if isUser(userId) || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /subjects/{subjectId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidSubject(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /app_settings/{settingId} {
+      allow read: if settingId == 'payment';
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /exams/{examId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /questions/{questionId} {
+      allow read: if canAccessQuestion(resource.data);
+      allow write: if isAdmin();
+    }
+
+    match /attempts/{attemptId} {
+      allow get, list: if isSignedIn() && (resource.data.studentId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() &&
+        request.resource.data.studentId == request.auth.uid &&
+        request.resource.data.examId is string &&
+        canAccessExamById(request.resource.data.examId);
+      allow update: if isSignedIn() && (resource.data.studentId == request.auth.uid || isAdmin());
+    }
+
+    match /attempt_answers/{answerId} {
+      allow read: if isSignedIn() && (resource.data.studentId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() &&
+        request.resource.data.studentId == request.auth.uid &&
+        request.resource.data.attemptId is string &&
+        exists(/databases/$(database)/documents/attempts/$(request.resource.data.attemptId)) &&
+        get(/databases/$(database)/documents/attempts/$(request.resource.data.attemptId)).data.studentId == request.auth.uid;
+      allow update: if isAdmin();
+    }
+
+    match /payment_sessions/{sessionId} {
+      allow get, list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /manual_payment_requests/{requestId} {
+      allow get, list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+  }
+}

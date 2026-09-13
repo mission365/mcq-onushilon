@@ -1,0 +1,10 @@
+{
+  "projectId": "gen-lang-client-0775776105",
+  "appId": "1:960411746191:web:e3a2eef72bdd03918455fa",
+  "apiKey": "Set VITE_FIREBASE_API_KEY in your environment",
+  "authDomain": "gen-lang-client-0775776105.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-f8a96b54-f951-490e-b384-f2052cb4cfdf",
+  "storageBucket": "gen-lang-client-0775776105.firebasestorage.app",
+  "messagingSenderId": "960411746191",
+  "measurementId": ""
+}
