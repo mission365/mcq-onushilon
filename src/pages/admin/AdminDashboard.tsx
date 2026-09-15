@@ -1,41 +1,34 @@
 import React, { useEffect, useState } from 'react';
-import { collection, getDocs, query, limit, orderBy } from 'firebase/firestore';
-import { db } from '@/src/lib/firebase';
 import Navbar from '@/src/components/layout/Navbar';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { Users, FileText, BookMarked, TrendingUp, ChevronRight, PlusCircle } from 'lucide-react';
 import { motion } from 'motion/react';
-import { isPaymentSettingsSubject } from '@/src/lib/paymentSettings';
+import { apiJson } from '@/src/lib/api';
 
 const AdminDashboard = () => {
   const [stats, setStats] = useState({
     users: 0,
     exams: 0,
     subjects: 0,
-    attempts: 0
+    attempts: 0,
   });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const [usersSnap, examsSnap, subjectsSnap, attemptsSnap] = await Promise.all([
-          getDocs(collection(db, 'profiles')),
-          getDocs(collection(db, 'exams')),
-          getDocs(collection(db, 'subjects')),
-          getDocs(collection(db, 'attempts'))
-        ]);
+        const data = await apiJson<{
+          users: number;
+          exams: number;
+          subjects: number;
+          attempts: number;
+        }>('/api/admin/stats');
 
-        setStats({
-          users: usersSnap.size,
-          exams: examsSnap.size,
-          subjects: subjectsSnap.docs.filter((doc) => !isPaymentSettingsSubject(doc.id)).length,
-          attempts: attemptsSnap.size
-        });
+        setStats(data);
       } catch (err) {
-        console.error("Stats fetching error:", err);
+        console.error('Stats fetching error:', err);
       } finally {
         setLoading(false);
       }

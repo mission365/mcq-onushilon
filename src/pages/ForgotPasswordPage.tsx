@@ -147,9 +147,13 @@ const ForgotPasswordPage = () => {
           <Card className="overflow-hidden rounded-2xl border-slate-200 bg-white shadow-xl">
             <CardHeader className="space-y-3 border-b border-slate-100 bg-slate-50 px-8 pb-8 pt-10 text-center">
               <div className="mb-5 flex justify-center">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-600 shadow-lg shadow-blue-200">
-                  <ShieldCheck className="h-9 w-9 text-white" />
-                </div>
+                <Link to="/">
+                  <img
+                    src="/images/logo.png"
+                    alt="MCQ Onushilon"
+                    className="h-10 w-auto object-contain hover:opacity-90 transition-opacity"
+                  />
+                </Link>
               </div>
               <CardTitle className="text-3xl font-bold text-slate-900">Reset your password</CardTitle>
               <CardDescription className="text-base text-slate-500">

@@ -1,17 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-} from 'firebase/firestore';
-import {
   Edit2,
   Trash2,
   Plus,
@@ -32,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import Navbar from '@/src/components/layout/Navbar';
-import { db } from '@/src/lib/firebase';
+import { apiJson } from '@/src/lib/api';
 import {
   QuestionLookup,
   findValueByAliases,
@@ -84,27 +72,16 @@ const AdminQuestions = () => {
     setLoading(true);
 
     try {
-      const examDoc = await getDoc(doc(db, 'exams', examId));
-      if (examDoc.exists()) {
-        setExam({ id: examDoc.id, ...examDoc.data() } as Exam);
-      }
-
-      const legacyQuery = query(collection(db, 'questions'), where('exam_id', '==', examId));
-      const currentQuery = query(collection(db, 'questions'), where('examId', '==', examId));
-      const [legacySnapshot, currentSnapshot] = await Promise.all([
-        getDocs(legacyQuery),
-        getDocs(currentQuery),
+      const [examData, questionsData] = await Promise.all([
+        apiJson<Exam>(`/api/exams/${examId}`).catch(() => null),
+        apiJson<QuestionLookup[]>(`/api/exams/${examId}/questions`).catch(() => []),
       ]);
 
-      const mergedQuestions = new Map<string, QuestionLookup>();
-      [...legacySnapshot.docs, ...currentSnapshot.docs].forEach((questionDoc) => {
-        mergedQuestions.set(questionDoc.id, {
-          id: questionDoc.id,
-          ...questionDoc.data(),
-        } as QuestionLookup);
-      });
+      if (examData) {
+        setExam(examData);
+      }
 
-      const sortedQuestions = Array.from(mergedQuestions.values()).sort(
+      const sortedQuestions = (questionsData || []).sort(
         (a, b) => (a.serialNumber || 0) - (b.serialNumber || 0),
       );
 
@@ -133,66 +110,20 @@ const AdminQuestions = () => {
         }
 
         setBulkUploading(true);
-        let successCount = 0;
 
-        for (const qData of json) {
-          if (!qData || typeof qData !== 'object' || Array.isArray(qData)) continue;
+        const res = await apiJson<{ success: boolean; count: number; message: string }>(
+          `/api/exams/${examId}/questions/bulk`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ questions: json }),
+          }
+        );
 
-          const row = qData as Record<string, unknown>;
-          const questionText = findValueByAliases(row, ['questionText', 'question_text', 'text']);
-          const stimulus = findValueByAliases(row, [
-            'stimulus',
-            'uddipok',
-            'উদ্দীপক',
-            'passage',
-            'context',
-            'stem',
-            'questionStem',
-          ]);
-          const optionA = findValueByAliases(row, ['optionA', 'option_a', 'a', 'optA', 'option1']);
-          const optionB = findValueByAliases(row, ['optionB', 'option_b', 'b', 'optB', 'option2']);
-          const optionC = findValueByAliases(row, ['optionC', 'option_c', 'c', 'optC', 'option3']);
-          const optionD = findValueByAliases(row, ['optionD', 'option_d', 'd', 'optD', 'option4']);
-          const explanation = findValueByAliases(row, ['explanation', 'explain']);
-          const rawCorrectOption = String(
-            findValueByAliases(row, ['correctOption', 'correct_option', 'answer']) || 'a',
-          ).toLowerCase();
-          const correctOption = (
-            ['a', 'b', 'c', 'd'].includes(rawCorrectOption) ? rawCorrectOption : 'a'
-          ) as Question['correctOption'];
-          const serialNumber = Number(
-            findValueByAliases(row, ['serialNumber', 'serial_number', 'sn']) ||
-              (questions.length + successCount + 1),
-          );
-
-          if (!questionText || !optionA || !optionB) continue;
-
-          const normalizedStimulus = String(stimulus || '');
-
-          await addDoc(collection(db, 'questions'), {
-            stimulus: normalizedStimulus,
-            uddipok: normalizedStimulus,
-            questionText: String(questionText),
-            optionA: String(optionA),
-            optionB: String(optionB),
-            optionC: String(optionC || ''),
-            optionD: String(optionD || ''),
-            correctOption,
-            explanation: String(explanation || ''),
-            serialNumber,
-            examId,
-            exam_id: examId,
-            createdAt: serverTimestamp(),
-          });
-
-          successCount += 1;
-        }
-
-        toast.success(`${successCount} টি প্রশ্ন সফলভাবে যোগ করা হয়েছে`);
+        toast.success(res.message || `${res.count} টি প্রশ্ন সফলভাবে যোগ করা হয়েছে`);
         setIsBulkModalOpen(false);
         await fetchQuestions();
-      } catch (error) {
-        toast.error('JSON ফাইলটি সঠিক নয় বা আপলোড সমস্যা হয়েছে');
+      } catch (error: any) {
+        toast.error(error.message || 'JSON ফাইলটি সঠিক নয় বা আপলোড সমস্যা হয়েছে');
       } finally {
         setBulkUploading(false);
         if (e.target) e.target.value = '';
@@ -218,20 +149,19 @@ const AdminQuestions = () => {
       const payload = {
         ...formData,
         stimulus: normalizedStimulus,
-        uddipok: normalizedStimulus,
-        examId,
-        exam_id: examId,
         serialNumber: Number(formData.serialNumber),
-        updatedAt: serverTimestamp(),
       };
 
       if (editingQuestion) {
-        await updateDoc(doc(db, 'questions', editingQuestion.id), payload);
+        await apiJson(`/api/questions/${editingQuestion.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
         toast.success('আপডেট সফল হয়েছে');
       } else {
-        await addDoc(collection(db, 'questions'), {
-          ...payload,
-          createdAt: serverTimestamp(),
+        await apiJson(`/api/exams/${examId}/questions`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
         });
         toast.success('নতুন প্রশ্ন যোগ করা হয়েছে');
       }
@@ -247,7 +177,7 @@ const AdminQuestions = () => {
     if (!confirm('আপনি কি নিশ্চিত?')) return;
 
     try {
-      await deleteDoc(doc(db, 'questions', id));
+      await apiJson(`/api/questions/${id}`, { method: 'DELETE' });
       toast.success('ডিলিট করা হয়েছে');
       setQuestions((previous) => previous.filter((question) => question.id !== id));
     } catch (error) {

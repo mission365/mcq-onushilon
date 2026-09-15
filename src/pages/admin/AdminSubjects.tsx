@@ -1,15 +1,4 @@
 import { useEffect, useState } from 'react';
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-} from 'firebase/firestore';
 import { ArrowLeft, Edit2, Loader2, Plus, Save, Trash2, Wallet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -23,8 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import Navbar from '@/src/components/layout/Navbar';
 import { DEFAULT_SUBJECT_UNLOCK_PRICE } from '@/src/lib/access';
-import { db } from '@/src/lib/firebase';
-import { PAYMENT_SETTINGS_SUBJECT_ID, isPaymentSettingsSubject } from '@/src/lib/paymentSettings';
+import { apiJson } from '@/src/lib/api';
 import { PaymentSettings, Subject } from '@/src/types';
 
 type SubjectFormState = {
@@ -32,6 +20,9 @@ type SubjectFormState = {
   nameBn: string;
   isActive: boolean;
   unlockPrice: number;
+  academicLevel: 'hsc' | 'ssc';
+  stream: 'science' | 'commerce' | 'humanities' | 'common';
+  curriculumVersion: 'bangla' | 'english' | 'both';
 };
 
 const initialFormState: SubjectFormState = {
@@ -39,6 +30,9 @@ const initialFormState: SubjectFormState = {
   nameBn: '',
   isActive: true,
   unlockPrice: DEFAULT_SUBJECT_UNLOCK_PRICE,
+  academicLevel: 'hsc',
+  stream: 'common',
+  curriculumVersion: 'bangla',
 };
 
 type PaymentSettingsFormState = {
@@ -74,13 +68,8 @@ const AdminSubjects = () => {
     setLoading(true);
 
     try {
-      const snapshot = await getDocs(collection(db, 'subjects'));
-      const nextSubjects = snapshot.docs
-        .map((item) => ({ id: item.id, ...item.data() } as Subject))
-        .filter((item) => !isPaymentSettingsSubject(item.id))
-        .sort((a, b) => a.name.localeCompare(b.name));
-
-      setSubjects(nextSubjects);
+      const data = await apiJson<Subject[]>('/api/subjects');
+      setSubjects(data);
     } catch (error) {
       console.error(error);
       toast.error('Failed to load subjects.');
@@ -91,18 +80,14 @@ const AdminSubjects = () => {
 
   const fetchPaymentSettings = async () => {
     try {
-      const snapshot = await getDoc(doc(db, 'subjects', PAYMENT_SETTINGS_SUBJECT_ID));
-      if (!snapshot.exists()) {
-        setPaymentSettings(initialPaymentSettings);
-        return;
+      const data = await apiJson<Partial<PaymentSettings>>('/api/payment-settings');
+      if (data) {
+        setPaymentSettings({
+          bkashNumber: data.bkashNumber || '',
+          bkashAccountName: data.bkashAccountName || '',
+          paymentInstructions: data.paymentInstructions || initialPaymentSettings.paymentInstructions,
+        });
       }
-
-      const data = snapshot.data() as Partial<PaymentSettings>;
-      setPaymentSettings({
-        bkashNumber: data.bkashNumber || '',
-        bkashAccountName: data.bkashAccountName || '',
-        paymentInstructions: data.paymentInstructions || initialPaymentSettings.paymentInstructions,
-      });
     } catch (error) {
       console.error(error);
       toast.error('Failed to load payment settings.');
@@ -117,21 +102,14 @@ const AdminSubjects = () => {
 
     try {
       setSavingPaymentSettings(true);
-      await setDoc(
-        doc(db, 'subjects', PAYMENT_SETTINGS_SUBJECT_ID),
-        {
-          name: 'Payment Settings',
-          nameBn: 'Payment Settings',
-          isActive: false,
-          unlockPrice: 0,
-          isSystem: true,
+      await apiJson('/api/payment-settings', {
+        method: 'POST',
+        body: JSON.stringify({
           bkashNumber: paymentSettings.bkashNumber.trim(),
           bkashAccountName: paymentSettings.bkashAccountName.trim(),
           paymentInstructions: paymentSettings.paymentInstructions.trim(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
+        }),
+      });
       toast.success('Payment settings saved.');
     } catch (error) {
       console.error(error);
@@ -160,6 +138,9 @@ const AdminSubjects = () => {
       nameBn: subject.nameBn,
       isActive: subject.isActive,
       unlockPrice: subject.unlockPrice ?? DEFAULT_SUBJECT_UNLOCK_PRICE,
+      academicLevel: subject.academicLevel || 'hsc',
+      stream: subject.stream || 'common',
+      curriculumVersion: subject.curriculumVersion || 'bangla',
     });
     setIsModalOpen(true);
   };
@@ -176,15 +157,21 @@ const AdminSubjects = () => {
         nameBn: formData.nameBn.trim(),
         isActive: formData.isActive,
         unlockPrice: Number(formData.unlockPrice) || 0,
+        academicLevel: formData.academicLevel,
+        stream: formData.stream,
+        curriculumVersion: formData.curriculumVersion,
       };
 
       if (editingSubject) {
-        await updateDoc(doc(db, 'subjects', editingSubject.id), payload);
+        await apiJson(`/api/subjects/${editingSubject.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
         toast.success('Subject updated successfully.');
       } else {
-        await addDoc(collection(db, 'subjects'), {
-          ...payload,
-          createdAt: serverTimestamp(),
+        await apiJson('/api/subjects', {
+          method: 'POST',
+          body: JSON.stringify(payload),
         });
         toast.success('New subject created.');
       }
@@ -203,7 +190,7 @@ const AdminSubjects = () => {
     }
 
     try {
-      await deleteDoc(doc(db, 'subjects', subjectId));
+      await apiJson(`/api/subjects/${subjectId}`, { method: 'DELETE' });
       toast.success('Subject deleted.');
       void fetchSubjects();
     } catch (error) {
@@ -457,6 +444,48 @@ const AdminSubjects = () => {
                 placeholder="299"
                 className="h-12 rounded-xl border-slate-200 focus:border-blue-500"
               />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="ml-1 font-bold text-slate-700">Academic Level</Label>
+                <select
+                  value={formData.academicLevel || 'hsc'}
+                  onChange={(e) => setFormData({ ...formData, academicLevel: e.target.value as 'hsc' | 'ssc' })}
+                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 font-semibold text-slate-700 focus:border-blue-500"
+                >
+                  <option value="hsc">HSC (একাদশ-দ্বাদশ)</option>
+                  <option value="ssc">SSC (নবম-দশম)</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="ml-1 font-bold text-slate-700">Group / Stream</Label>
+                <select
+                  value={formData.stream || 'common'}
+                  onChange={(e) => setFormData({ ...formData, stream: e.target.value as any })}
+                  className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 font-semibold text-slate-700 focus:border-blue-500"
+                >
+                  <option value="common">আবশ্যিক (Common)</option>
+                  <option value="science">বিজ্ঞান (Science)</option>
+                  <option value="commerce">ব্যবসায় শিক্ষা (Commerce)</option>
+                  <option value="humanities">মানবিক (Humanities)</option>
+                  <option value="optional">ঐচ্ছিক বিষয় (Optional / 4th)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="ml-1 font-bold text-slate-700">Curriculum Version</Label>
+              <select
+                value={formData.curriculumVersion || 'bangla'}
+                onChange={(e) => setFormData({ ...formData, curriculumVersion: e.target.value as any })}
+                className="h-12 w-full rounded-xl border border-slate-200 bg-white px-3 font-semibold text-slate-700 focus:border-blue-500"
+              >
+                <option value="bangla">বাংলা মাধ্যম (Bangla Version)</option>
+                <option value="english">English Version</option>
+                <option value="both">Both (উভয় মাধ্যম)</option>
+              </select>
             </div>
 
             <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4">

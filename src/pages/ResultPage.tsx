@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 import {
@@ -19,11 +18,18 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader } from '../../components/ui/card';
 import { canAccessExam } from '../lib/access';
+import { apiJson } from '../lib/api';
+import { useAuthStore } from '../lib/authStore';
 import { getExamSubjectId, isExamPublished, normalizeExam } from '../lib/exam';
-import { auth, db } from '../lib/firebase';
 import { QuestionLookup, getOptionText, getQuestionStimulus } from '../lib/question';
 import { useExamStore } from '../store/examStore';
 import { Attempt, AttemptAnswer, Exam } from '../types';
+
+type ApiResultResponse = {
+  attempt: Attempt;
+  exam: Exam;
+  questions: (QuestionLookup & { selectedOption: string | null; isCorrect: boolean })[];
+};
 
 const ResultPage = () => {
   const { attemptId } = useParams<{ attemptId: string }>();
@@ -46,52 +52,29 @@ const ResultPage = () => {
       if (!attemptId) return;
 
       try {
-        const attemptDoc = await getDoc(doc(db, 'attempts', attemptId));
-        if (!attemptDoc.exists()) {
-          navigate('/dashboard');
-          return;
-        }
+        const data = await apiJson<ApiResultResponse>(`/api/attempts/${attemptId}`);
+        setAttempt(data.attempt);
+        setExam(data.exam);
 
-        const attemptData = { id: attemptDoc.id, ...attemptDoc.data() } as Attempt;
-        setAttempt(attemptData);
-
-        const examDoc = await getDoc(doc(db, 'exams', attemptData.examId));
-        if (examDoc.exists()) {
-          setExam({ id: examDoc.id, ...examDoc.data() } as Exam);
-        }
-
-        const legacyQuestionsQuery = query(collection(db, 'questions'), where('exam_id', '==', attemptData.examId));
-        const currentQuestionsQuery = query(collection(db, 'questions'), where('examId', '==', attemptData.examId));
-        const [legacyQuestionsSnapshot, currentQuestionsSnapshot] = await Promise.all([
-          getDocs(legacyQuestionsQuery),
-          getDocs(currentQuestionsQuery),
-        ]);
-
-        const questionMap = new Map<string, QuestionLookup>();
-        [...legacyQuestionsSnapshot.docs, ...currentQuestionsSnapshot.docs].forEach((questionDoc) => {
-          questionMap.set(questionDoc.id, {
-            id: questionDoc.id,
-            ...questionDoc.data(),
-          } as QuestionLookup);
-        });
-
-        const questionList = Array.from(questionMap.values()).sort(
-          (a, b) => (a.serialNumber || 0) - (b.serialNumber || 0),
-        );
-        setQuestions(questionList);
-
-        const answersQuery = query(collection(db, 'attempt_answers'), where('attemptId', '==', attemptId));
-        const answersSnapshot = await getDocs(answersQuery);
         const answersData: Record<string, AttemptAnswer> = {};
+        const qList: QuestionLookup[] = data.questions.map((q) => {
+          answersData[q.id] = {
+            id: q.id,
+            attemptId,
+            questionId: q.id,
+            selectedOption: q.selectedOption,
+            isCorrect: q.isCorrect,
+          } as AttemptAnswer;
 
-        answersSnapshot.docs.forEach((answerDoc) => {
-          const answer = { id: answerDoc.id, ...answerDoc.data() } as AttemptAnswer;
-          answersData[answer.questionId] = answer;
+          return q;
         });
 
+        setQuestions(qList);
         setAnswers(answersData);
       } catch (error) {
         console.error('Result fetch error:', error);
+        toast.error('ফলাফল লোড করতে ত্রুটি হয়েছে');
+        navigate('/dashboard');
       } finally {
         setLoading(false);
       }
@@ -106,11 +89,18 @@ const ResultPage = () => {
       ? Math.min((normalizedScore / exam.totalMarks) * 100, 100)
       : 0;
 
+  const totalAttempted = attempt?.totalAttempted || 0;
+  const correctCount = attempt?.correctCount || 0;
+  const wrongCount = attempt?.wrongCount || 0;
+  const skippedCount = Math.max(0, questions.length - totalAttempted);
+  const accuracyPercentage = totalAttempted > 0 ? Math.round((correctCount / totalAttempted) * 100) : 0;
+  const timeUsedMinutes = exam?.durationMinutes || 15;
+
   const stats = [
-    { label: 'মোট প্রশ্ন', value: questions.length, icon: Target, color: 'text-blue-600', bg: 'bg-blue-50' },
-    { label: 'অংশগ্রহণ', value: attempt?.totalAttempted || 0, icon: Zap, color: 'text-purple-600', bg: 'bg-purple-50' },
-    { label: 'সঠিক', value: attempt?.correctCount || 0, icon: CheckCircle2, color: 'text-green-600', bg: 'bg-green-50' },
-    { label: 'ভুল', value: attempt?.wrongCount || 0, icon: XCircle, color: 'text-red-600', bg: 'bg-red-50' },
+    { label: 'মোট প্রাপ্ত নম্বর', value: `${normalizedScore.toFixed(1)}`, icon: Target, color: 'text-blue-600', bg: 'bg-blue-50/70', border: 'border-blue-100' },
+    { label: 'সঠিক উত্তর', value: `${correctCount}টি`, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50/70', border: 'border-emerald-100' },
+    { label: 'ভুল উত্তর', value: `${wrongCount}টি`, icon: XCircle, color: 'text-rose-600', bg: 'bg-rose-50/70', border: 'border-rose-100' },
+    { label: 'নির্ভুলতা (Accuracy)', value: `${accuracyPercentage}%`, icon: Zap, color: 'text-violet-600', bg: 'bg-violet-50/70', border: 'border-violet-100' },
   ];
 
   const handleGoToModelTests = () => {
@@ -149,9 +139,13 @@ const ResultPage = () => {
     if (!exam?.subjectId) return;
 
     try {
-      const examsSnapshot = await getDocs(collection(db, 'exams'));
-      const examList = examsSnapshot.docs
-        .map((examDoc) => normalizeExam({ id: examDoc.id, ...examDoc.data() }))
+      const [rawExamList, accessData] = await Promise.all([
+        apiJson<Exam[]>(`/api/exams?subjectId=${exam.subjectId}`).catch(() => []),
+        apiJson<{ hasAccess: boolean }>(`/api/subjects/${exam.subjectId}/access`).catch(() => ({ hasAccess: false })),
+      ]);
+
+      const examList = (rawExamList || [])
+        .map((examDoc) => normalizeExam(examDoc))
         .filter((item) => getExamSubjectId(item) === exam.subjectId && isExamPublished(item))
         .sort((a, b) => a.serialNumber - b.serialNumber);
 
@@ -163,12 +157,7 @@ const ResultPage = () => {
         return;
       }
 
-      const user = auth.currentUser;
-      const paidAccessSnapshot = user
-        ? await getDoc(doc(db, 'profiles', user.uid, 'subject_access', exam.subjectId))
-        : null;
-
-      if (!canAccessExam(nextExam, paidAccessSnapshot?.exists() || false)) {
+      if (!canAccessExam(nextExam, accessData.hasAccess)) {
         toast.info('The next test is locked. Unlock this subject first.');
         navigate(`/subjects/${exam.subjectId}`);
         return;
@@ -186,47 +175,62 @@ const ResultPage = () => {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center font-bengali">
-        ফলাফল তৈরি হচ্ছে...
+      <div className="flex h-screen items-center justify-center font-bengali text-slate-600">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+          <p className="font-semibold">ফলাফল ও বিশ্লেষণ তৈরি হচ্ছে...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 px-4 py-12 font-sans sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-slate-50 px-4 py-8 font-sans sm:px-6 lg:px-8">
       <div className="mx-auto max-w-4xl">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-10 overflow-hidden rounded-[2.5rem] border border-slate-100 bg-white shadow-xl shadow-slate-200/50"
+          className="mb-10 overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-md"
         >
-          <div className="relative overflow-hidden bg-slate-900 p-12 text-center">
-            <div className="absolute right-0 top-0 -mr-32 -mt-32 h-64 w-64 animate-pulse rounded-full bg-blue-500/10 blur-3xl" />
-            <div className="absolute bottom-0 left-0 -mb-32 -ml-32 h-64 w-64 rounded-full bg-purple-500/10 blur-3xl" />
+          {/* Top Hero: Compact Height & Raised Score Circle */}
+          <div className="relative overflow-hidden bg-slate-900 px-6 py-10 md:py-12 text-center">
+            <div className="absolute right-0 top-0 -mr-24 -mt-24 h-56 w-56 rounded-full bg-blue-500/10 blur-2xl" />
+            <div className="absolute bottom-0 left-0 -mb-24 -ml-24 h-56 w-56 rounded-full bg-indigo-500/10 blur-2xl" />
 
-            <h1 className="mb-2 text-4xl font-bold text-white font-bengali">{exam?.title}</h1>
-            <p className="mb-12 font-medium text-slate-400">পরীক্ষার ফলাফল বিশ্লেষণ</p>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/15 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-300 font-bengali mb-3">
+              পরীক্ষার ফলাফল বিশ্লেষণ
+            </span>
 
-            <div className="relative mb-8 inline-flex items-center justify-center">
-              <svg className="h-48 w-48 -rotate-90 transform">
+            <h1 className="text-2xl md:text-3xl font-bold text-white font-bengali max-w-2xl mx-auto">
+              {exam?.title}
+            </h1>
+
+            {/* Quick Summary Sentence */}
+            <p className="mt-2 text-sm md:text-base font-medium text-slate-300 font-bengali">
+              আপনি {questions.length}টির মধ্যে <span className="font-bold text-emerald-400">{correctCount}টি সঠিক</span> উত্তর দিয়েছেন
+            </p>
+
+            {/* Score Ring */}
+            <div className="relative mt-6 mb-2 inline-flex items-center justify-center">
+              <svg className="h-40 w-40 -rotate-90 transform">
                 <circle
-                  cx="96"
-                  cy="96"
-                  r="88"
+                  cx="80"
+                  cy="80"
+                  r="70"
                   stroke="currentColor"
-                  strokeWidth="12"
+                  strokeWidth="10"
                   fill="transparent"
-                  className="text-white/5"
+                  className="text-white/10"
                 />
                 <circle
-                  cx="96"
-                  cy="96"
-                  r="88"
+                  cx="80"
+                  cy="80"
+                  r="70"
                   stroke="currentColor"
-                  strokeWidth="12"
+                  strokeWidth="10"
                   fill="transparent"
-                  strokeDasharray={552.92}
-                  strokeDashoffset={552.92 - (552.92 * scorePercentage) / 100}
+                  strokeDasharray={439.8}
+                  strokeDashoffset={439.8 - (439.8 * scorePercentage) / 100}
                   className="text-blue-500 transition-all duration-1000 ease-out"
                   strokeLinecap="round"
                 />
@@ -234,74 +238,112 @@ const ResultPage = () => {
 
               <div className="absolute flex flex-col items-center">
                 <div className="flex items-baseline justify-center gap-1 leading-none">
-                  <span className="font-sans text-3xl font-black tracking-tighter text-white tabular-nums">
-                    {normalizedScore.toFixed(2)}
+                  <span className="font-sans text-3xl md:text-4xl font-black tracking-tight text-white tabular-nums">
+                    {normalizedScore.toFixed(1)}
                   </span>
-                  <span className="font-sans text-3xl font-bold text-gray-300 tabular-nums">
+                  <span className="font-sans text-xl font-bold text-slate-400 tabular-nums">
                     / {exam?.totalMarks}
                   </span>
                 </div>
-                <span className="mt-1 text-xs font-bold uppercase tracking-widest text-blue-400">
-                  Total Score
+                <span className="mt-1 text-[11px] font-bold uppercase tracking-wider text-blue-400 font-bengali">
+                  মোট স্কোর
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="p-12">
-            <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
+          <div className="p-6 md:p-8">
+            {/* 4 Stat Cards */}
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-4">
               {stats.map((stat, index) => (
                 <div
                   key={index}
-                  className={`${stat.bg} flex flex-col items-center justify-center rounded-3xl border border-white p-6 shadow-sm transition-transform hover:scale-105`}
+                  className={`${stat.bg} ${stat.border} flex flex-col items-center justify-center rounded-2xl border p-4 text-center transition-all hover:scale-[1.02] shadow-2xs`}
                 >
-                  <stat.icon className={`mb-3 h-8 w-8 ${stat.color}`} />
-                  <span className="text-2xl font-black text-slate-800">{stat.value}</span>
-                  <span className="mt-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  <stat.icon className={`mb-2 h-6 w-6 ${stat.color}`} />
+                  <span className="text-xl md:text-2xl font-black text-slate-800 font-sans">{stat.value}</span>
+                  <span className="mt-1 text-xs font-semibold text-slate-500 font-bengali">
                     {stat.label}
                   </span>
                 </div>
               ))}
             </div>
 
-            <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {/* Performance Breakdown Strip */}
+            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-600 font-bengali mb-2">
+                <span>পারফরম্যান্স অনুপাত</span>
+                <span>মোট প্রশ্ন: {questions.length}টি</span>
+              </div>
+              <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="bg-emerald-500 transition-all duration-500"
+                  style={{ width: `${(correctCount / (questions.length || 1)) * 100}%` }}
+                  title={`সঠিক: ${correctCount}`}
+                />
+                <div
+                  className="bg-rose-500 transition-all duration-500"
+                  style={{ width: `${(wrongCount / (questions.length || 1)) * 100}%` }}
+                  title={`ভুল: ${wrongCount}`}
+                />
+                <div
+                  className="bg-slate-300 transition-all duration-500"
+                  style={{ width: `${(skippedCount / (questions.length || 1)) * 100}%` }}
+                  title={`উত্তর দেননি: ${skippedCount}`}
+                />
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center justify-center gap-3 sm:gap-5 text-xs font-medium font-bengali">
+                <span className="flex items-center gap-1.5 text-emerald-700">
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" /> সঠিক ({correctCount})
+                </span>
+                <span className="flex items-center gap-1.5 text-rose-700">
+                  <span className="h-2.5 w-2.5 rounded-full bg-rose-500" /> ভুল ({wrongCount})
+                </span>
+                <span className="flex items-center gap-1.5 text-slate-600">
+                  <span className="h-2.5 w-2.5 rounded-full bg-slate-400" /> উত্তর দেননি ({skippedCount})
+                </span>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Button
                 onClick={handleGoToModelTests}
-                className="h-14 justify-center gap-3 rounded-2xl border-none bg-slate-900 text-lg font-bold text-white hover:bg-slate-800"
+                className="h-12 justify-center gap-2 rounded-xl border-none bg-blue-600 text-base font-bold text-white hover:bg-blue-700 font-bengali shadow-xs"
               >
                 <ListChecks className="h-5 w-5 shrink-0" />
-                <span className="font-bengali">মডেল টেস্টসমূহ</span>
+                <span>মডেল টেস্ট তালিকা</span>
               </Button>
 
               <Button
                 variant="outline"
                 onClick={handleRetryExam}
-                className="h-14 justify-center gap-3 rounded-2xl border-2 border-slate-200 text-lg font-bold text-slate-700 transition-all hover:border-blue-400 hover:bg-blue-50"
+                className="h-12 justify-center gap-2 rounded-xl border-2 border-slate-200 text-base font-bold text-slate-700 transition-all hover:border-blue-400 hover:bg-blue-50 font-bengali"
               >
                 <RotateCcw className="h-5 w-5 shrink-0" />
-                <span className="font-bengali">পুনরায় পরীক্ষা দাও</span>
+                <span>পুনরায় পরীক্ষা দিন</span>
               </Button>
 
               <Button
                 variant="outline"
                 onClick={handleToggleAnswerSheet}
-                className={`h-14 justify-center gap-3 rounded-2xl border-2 text-lg font-bold transition-all ${
+                className={`h-12 justify-center gap-2 rounded-xl border-2 text-base font-bold transition-all font-bengali ${
                   showAnswerSheet
                     ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
                     : 'border-slate-200 text-slate-700 hover:border-emerald-400 hover:bg-emerald-50'
                 }`}
               >
                 <FileText className="h-5 w-5 shrink-0" />
-                <span className="font-bengali">উত্তরপত্র</span>
+                <span>{showAnswerSheet ? 'উত্তরপত্র বন্ধ করুন' : 'ব্যাখ্যাসহ উত্তরপত্র দেখুন'}</span>
               </Button>
 
               <Button
                 variant="outline"
                 onClick={handleNextExam}
-                className="h-14 justify-center gap-3 rounded-2xl border-2 border-slate-200 text-lg font-bold text-slate-700 transition-all hover:border-violet-400 hover:bg-violet-50"
+                className="h-12 justify-center gap-2 rounded-xl border-2 border-slate-200 text-base font-bold text-slate-700 transition-all hover:border-violet-400 hover:bg-violet-50 font-bengali"
               >
                 <ArrowRight className="h-5 w-5 shrink-0" />
-                <span className="font-bengali">পরবর্তী প্রশ্ন</span>
+                <span>পরবর্তী মডেল টেস্ট</span>
               </Button>
             </div>
           </div>

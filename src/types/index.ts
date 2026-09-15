@@ -1,8 +1,15 @@
+export type CurriculumVersion = 'bangla' | 'english' | 'british' | 'ib';
+export type AcademicLevel = 'hsc' | 'ssc' | 'olevel' | 'alevel' | 'myp' | 'dp';
+
 export interface Profile {
   id: string;
   fullName: string;
   email: string;
   role: 'student' | 'admin';
+  isVerified?: boolean;
+  curriculumVersion?: CurriculumVersion | null;
+  academicLevel?: AcademicLevel | null;
+  stream?: 'science' | 'commerce' | 'humanities' | 'common' | null;
   createdAt: any;
 }
 
@@ -13,6 +20,9 @@ export interface Subject {
   icon: string;
   isActive: boolean;
   unlockPrice?: number;
+  curriculumVersion?: CurriculumVersion | 'both';
+  academicLevel?: AcademicLevel;
+  stream?: 'science' | 'commerce' | 'humanities' | 'common';
   createdAt: any;
 }
 
@@ -34,6 +44,14 @@ export interface Exam {
   negativeMark: number;
   instructions: string;
   isPublished: boolean;
+  curriculumVersion?: CurriculumVersion | 'both';
+  academicLevel?: AcademicLevel;
+  examType?: 'model_test' | 'board_question';
+  boardName?: string;
+  examYear?: number;
+  subjectNameBn?: string;
+  subjectName?: string;
+  subjectStream?: string;
   createdAt: any;
 }
 

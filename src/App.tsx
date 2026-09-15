@@ -1,8 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from './lib/firebase';
+import { useAuthStore } from './lib/authStore';
 import { Toaster } from '../components/ui/sonner';
 
 // Pages
@@ -10,6 +8,9 @@ import LandingPage from '@/src/pages/LandingPage';
 import LoginPage from '@/src/pages/LoginPage';
 import ForgotPasswordPage from '@/src/pages/ForgotPasswordPage';
 import RegisterPage from '@/src/pages/RegisterPage';
+import VerifyEmailPage from '@/src/pages/VerifyEmailPage';
+import { SelectVersionPage } from '@/src/pages/SelectVersionPage';
+import FeaturesPage from '@/src/pages/FeaturesPage';
 import Dashboard from '@/src/pages/Dashboard';
 import SubjectExams from '@/src/pages/SubjectExams';
 import LiveExam from '@/src/pages/LiveExam';
@@ -24,33 +25,15 @@ import AdminQuestions from '@/src/pages/admin/AdminQuestions';
 import AdminManualPayments from '@/src/pages/admin/AdminManualPayments';
 
 const ProtectedRoute = ({ role }: { role?: 'student' | 'admin' }) => {
-  const [user, setUser] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [userRole, setUserRole] = useState<string | null>(null);
+  const { user, isAuthenticated } = useAuthStore();
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (authUser) => {
-      if (authUser) {
-        setUser(authUser);
-        const docRef = doc(db, 'profiles', authUser.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setUserRole(docSnap.data().role);
-        }
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
-    });
-    return unsubscribe;
-  }, []);
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login" replace />;
+  }
 
-  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
-
-  if (!user) return <Navigate to="/login" />;
-
-  if (role && userRole !== role) {
-    return <Navigate to="/dashboard" />;
+  // Restrict admin routes to admin role only
+  if (role === 'admin' && user.role !== 'admin') {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return <Outlet />;
@@ -62,13 +45,16 @@ export default function App() {
       <Routes>
         {/* Public Routes */}
         <Route path="/" element={<LandingPage />} />
+        <Route path="/features" element={<FeaturesPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route path="/payments/bkash/callback" element={<BkashPaymentCallback />} />
 
         {/* Student Routes */}
         <Route element={<ProtectedRoute role="student" />}>
+          <Route path="/select-version" element={<SelectVersionPage />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/subjects/:subjectId" element={<SubjectExams />} />
           <Route path="/exam/:examId/start" element={<LiveExam />} />
@@ -83,8 +69,8 @@ export default function App() {
           <Route path="/admin/exams/:examId/questions" element={<AdminQuestions />} />
           <Route path="/admin/payments" element={<AdminManualPayments />} />
         </Route>
-        
-        <Route path="*" element={<Navigate to="/" />} />
+
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toaster />
     </Router>

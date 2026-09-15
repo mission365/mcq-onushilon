@@ -70,5 +70,11 @@ export const normalizeExam = (exam: LooseExamRecord): Exam => ({
   ),
   instructions: typeof exam.instructions === 'string' ? exam.instructions : '',
   isPublished: isExamPublished(exam),
+  academicLevel: (exam as any).academicLevel ?? (exam as any).academic_level ?? 'hsc',
+  examType: (exam as any).examType ?? (exam as any).exam_type ?? 'model_test',
+  boardName: (exam as any).boardName ?? (exam as any).board_name ?? '',
+  examYear: (exam as any).examYear ?? (exam as any).exam_year ?? undefined,
+  subjectNameBn: (exam as any).subjectNameBn ?? (exam as any).subject_name_bn ?? '',
+  subjectStream: (exam as any).subjectStream ?? (exam as any).subject_stream ?? '',
   createdAt: exam.createdAt ?? (exam as Partial<Exam> & Record<string, unknown>).created_at ?? null,
 });

@@ -1,15 +1,4 @@
 import { useEffect, useState } from 'react';
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-} from 'firebase/firestore';
 import { ArrowLeft, CheckCircle2, Clock3, Loader2, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -19,11 +8,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import Navbar from '@/src/components/layout/Navbar';
-import { auth, db } from '@/src/lib/firebase';
+import { apiJson } from '@/src/lib/api';
 
 type ManualPaymentRequest = {
   id: string;
   userId: string;
+  userName?: string;
+  userEmail?: string;
   subjectId: string;
   subjectName: string;
   senderBkashNumber: string;
@@ -37,59 +28,24 @@ type ManualPaymentRequest = {
   reviewedAt?: unknown;
 };
 
-const timestampToMillis = (value: unknown) => {
-  if (!value) return 0;
-  if (typeof value === 'object' && value !== null && 'toDate' in value) {
-    return (value as { toDate: () => Date }).toDate().getTime();
-  }
-  if (value instanceof Date) return value.getTime();
-  const parsed = new Date(String(value));
-  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
-};
-
 const formatDateTime = (value: unknown) => {
-  const millis = timestampToMillis(value);
-  if (!millis) return '-';
-  return new Intl.DateTimeFormat('bn-BD', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(millis));
+  if (!value) return '-';
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) return '-';
+  return new Intl.DateTimeFormat('bn-BD', { dateStyle: 'medium', timeStyle: 'short' }).format(parsed);
 };
 
 const AdminManualPayments = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [requests, setRequests] = useState<ManualPaymentRequest[]>([]);
-  const [userNames, setUserNames] = useState<Record<string, string>>({});
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   const fetchRequests = async () => {
     setLoading(true);
     try {
-      const snapshot = await getDocs(
-        query(collection(db, 'manual_payment_requests'), orderBy('createdAt', 'desc')),
-      );
-
-      const rows = snapshot.docs.map(
-        (requestDoc) => ({ id: requestDoc.id, ...requestDoc.data() }) as ManualPaymentRequest,
-      );
-      setRequests(rows);
-
-      const uniqueUserIds = [...new Set(rows.map((item) => item.userId).filter(Boolean))];
-      const profiles = await Promise.all(
-        uniqueUserIds.map(async (userId) => {
-          const profileSnapshot = await getDoc(doc(db, 'profiles', userId));
-          return {
-            userId,
-            fullName: profileSnapshot.exists()
-              ? (profileSnapshot.data().fullName as string) || userId
-              : userId,
-          };
-        }),
-      );
-
-      const nextNames: Record<string, string> = {};
-      profiles.forEach((entry) => {
-        nextNames[entry.userId] = entry.fullName;
-      });
-      setUserNames(nextNames);
+      const data = await apiJson<ManualPaymentRequest[]>('/api/admin/manual-payments');
+      setRequests(data || []);
     } catch (error) {
       console.error(error);
       toast.error('Failed to load payment requests.');
@@ -107,49 +63,18 @@ const AdminManualPayments = () => {
       return;
     }
 
-    const adminUser = auth.currentUser;
-    if (!adminUser) {
-      toast.error('Please login again.');
-      return;
-    }
-
     setProcessingId(requestItem.id);
     try {
-      const accessRef = doc(db, 'profiles', requestItem.userId, 'subject_access', requestItem.subjectId);
-      const existingAccess = await getDoc(accessRef);
-
-      if (!existingAccess.exists()) {
-        await setDoc(
-          accessRef,
-          {
-            subjectId: requestItem.subjectId,
-            gateway: 'bkash',
-            paymentMethod: 'manual',
-            status: 'active',
-            amount: requestItem.amount,
-            currency: requestItem.currency || 'BDT',
-            paymentID: requestItem.id,
-            trxID: requestItem.transactionId,
-            merchantInvoiceNumber: requestItem.transactionId,
-            unlockedAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
-      }
-
-      await updateDoc(doc(db, 'manual_payment_requests', requestItem.id), {
-        status: 'approved',
-        reviewedBy: adminUser.uid,
-        reviewedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await apiJson(`/api/admin/manual-payments/${requestItem.id}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: 'approved' }),
       });
 
       toast.success('Payment approved and subject unlocked.');
       await fetchRequests();
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      toast.error('Failed to approve this request.');
+      toast.error(error.message || 'Failed to approve this request.');
     } finally {
       setProcessingId(null);
     }
@@ -160,25 +85,18 @@ const AdminManualPayments = () => {
       return;
     }
 
-    const adminUser = auth.currentUser;
-    if (!adminUser) {
-      toast.error('Please login again.');
-      return;
-    }
-
     setProcessingId(requestItem.id);
     try {
-      await updateDoc(doc(db, 'manual_payment_requests', requestItem.id), {
-        status: 'rejected',
-        reviewedBy: adminUser.uid,
-        reviewedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await apiJson(`/api/admin/manual-payments/${requestItem.id}/status`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: 'rejected' }),
       });
+
       toast.success('Payment request rejected.');
       await fetchRequests();
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      toast.error('Failed to reject this request.');
+      toast.error(error.message || 'Failed to reject this request.');
     } finally {
       setProcessingId(null);
     }
@@ -238,7 +156,7 @@ const AdminManualPayments = () => {
                         return (
                           <TableRow key={requestItem.id}>
                             <TableCell className="font-semibold text-slate-800">
-                              {userNames[requestItem.userId] || requestItem.userId}
+                              {requestItem.userName || requestItem.userEmail || requestItem.userId}
                             </TableCell>
                             <TableCell className="font-medium text-slate-700">{requestItem.subjectName}</TableCell>
                             <TableCell className="font-semibold text-slate-800">

@@ -1,7 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy } from 'firebase/firestore';
-import { db } from '@/src/lib/firebase';
-import { isPaymentSettingsSubject } from '@/src/lib/paymentSettings';
 import { Exam, Subject } from '@/src/types';
 import Navbar from '@/src/components/layout/Navbar';
 import { Button } from '@/components/ui/button';
@@ -14,6 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import { Edit2, Trash2, Plus, ArrowLeft, Loader2, ListTree } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
+import { apiJson } from '@/src/lib/api';
 
 const AdminExams = () => {
   const [exams, setExams] = useState<Exam[]>([]);
@@ -41,20 +39,19 @@ const AdminExams = () => {
   }, []);
 
   const fetchSubjects = async () => {
-    const snap = await getDocs(collection(db, 'subjects'));
-    setSubjects(
-      snap.docs
-        .map(d => ({ id: d.id, ...d.data() } as Subject))
-        .filter((subject) => !isPaymentSettingsSubject(subject.id)),
-    );
+    try {
+      const data = await apiJson<Subject[]>('/api/subjects');
+      setSubjects(data);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const fetchExams = async () => {
     setLoading(true);
     try {
-      const q = query(collection(db, 'exams'), orderBy('serialNumber', 'asc'));
-      const snap = await getDocs(q);
-      setExams(snap.docs.map(d => ({ id: d.id, ...d.data() } as Exam)));
+      const data = await apiJson<Exam[]>('/api/exams');
+      setExams(data);
     } catch (err) {
       console.error(err);
       toast.error("ডাটা লোড হয়নি");
@@ -76,12 +73,15 @@ const AdminExams = () => {
       };
 
       if (editingExam) {
-        await updateDoc(doc(db, 'exams', editingExam.id), payload);
+        await apiJson(`/api/exams/${editingExam.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        });
         toast.success("আপডেট সফল হয়েছে");
       } else {
-        await addDoc(collection(db, 'exams'), {
-          ...payload,
-          createdAt: serverTimestamp()
+        await apiJson('/api/exams', {
+          method: 'POST',
+          body: JSON.stringify(payload),
         });
         toast.success("নতুন পরীক্ষা যোগ করা হয়েছে");
       }
@@ -95,7 +95,7 @@ const AdminExams = () => {
   const handleDelete = async (id: string) => {
     if (!confirm("আপনি কি নিশ্চিত?")) return;
     try {
-      await deleteDoc(doc(db, 'exams', id));
+      await apiJson(`/api/exams/${id}`, { method: 'DELETE' });
       toast.success("ডিলিট করা হয়েছে");
       fetchExams();
     } catch (err) {

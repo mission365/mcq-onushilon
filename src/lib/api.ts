@@ -1,3 +1,5 @@
+import { useAuthStore } from './authStore';
+
 const rawApiBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() || '';
 
 export const getApiUrl = (path: string) => {
@@ -12,12 +14,19 @@ type ApiErrorPayload = {
 };
 
 export async function apiJson<TResponse>(path: string, init?: RequestInit): Promise<TResponse> {
+  const token = useAuthStore.getState().token;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(init?.headers as Record<string, string> || {}),
+  };
+
+  if (token && !headers.Authorization) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   const response = await fetch(getApiUrl(path), {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
+    headers,
   });
 
   const contentType = response.headers.get('content-type') || '';
@@ -26,10 +35,17 @@ export async function apiJson<TResponse>(path: string, init?: RequestInit): Prom
     : await response.text();
 
   if (!response.ok) {
-    const message =
-      typeof payload === 'object' && payload !== null
-        ? (payload as ApiErrorPayload).message || 'Request failed.'
-        : 'Request failed.';
+    let message = 'Request failed.';
+
+    if (typeof payload === 'object' && payload !== null) {
+      message = (payload as any).message || (payload as any).error || (payload as any).msg || 'Request failed.';
+    } else if (typeof payload === 'string' && payload.trim().length > 0 && payload.length < 250) {
+      message = payload.trim();
+    }
+
+    if (response.status === 401 && token) {
+      useAuthStore.getState().logout();
+    }
 
     throw new Error(message);
   }

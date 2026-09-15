@@ -1,17 +1,16 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const apiKey = import.meta.env.VITE_FIREBASE_API_KEY?.trim();
+const rawApiKey = import.meta.env.VITE_FIREBASE_API_KEY?.trim();
+export const isFirebaseConfigured = Boolean(
+  rawApiKey && rawApiKey !== 'Set VITE_FIREBASE_API_KEY in your environment'
+);
 
-if (!apiKey) {
-  throw new Error('Missing VITE_FIREBASE_API_KEY. Add it to your local environment before starting the app.');
-}
+const apiKey = isFirebaseConfigured ? rawApiKey : 'AIzaSyPreviewDummyKeyWhenUnset';
 
 const app = initializeApp({ ...firebaseConfig, apiKey });
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const googleProvider = new GoogleAuthProvider();
 
 export default app;
