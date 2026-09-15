@@ -302,17 +302,6 @@ npx tsx server/seed_british_ib_curriculum.ts
 | **Payments** | bKash Merchant API, manual bKash flow |
 | **Routing** | React Router DOM v7 |
 
----
-
-## 👤 Default Admin Account
-
-On first start, an admin user is seeded automatically:
-
-| Email | Password |
-|---|---|
-| `sajibuddin@gmail.com` | `sajib12345678` |
-
-> ⚠️ **Change the default admin password immediately after first login in any production deployment.**
 
 ---
 
