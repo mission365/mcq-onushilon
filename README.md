@@ -304,18 +304,6 @@ npx tsx server/seed_british_ib_curriculum.ts
 
 ---
 
-## 👤 Default Admin Account
-
-On first start, an admin user is seeded automatically:
-
-| Email | Password |
-|---|---|
-| `sajibuddin@gmail.com` | `sajib12345678` |
-
-> ⚠️ **Change the default admin password immediately after first login in any production deployment.**
-
----
-
 ## 📄 License
 
 This project is private and proprietary. All rights reserved.
