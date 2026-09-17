@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Subject, Exam, CurriculumVersion, AcademicLevel } from '@/src/types';
+import { Subject, Exam, CurriculumVersion, AcademicLevel, UserSubscriptionStatus } from '@/src/types';
 import Navbar from '@/src/components/layout/Navbar';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -24,16 +24,38 @@ import {
   Award,
   Compass,
   Building2,
+  User,
+  ShieldCheck,
+  Lock,
+  Play,
+  HelpCircle,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { apiJson } from '@/src/lib/api';
 import { useAuthStore } from '@/src/lib/authStore';
+
+const toBnNumber = (n: number | string): string => {
+  const bnDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+  return String(n).replace(/[0-9]/g, (d) => bnDigits[Number(d)]);
+};
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loading, setLoading] = useState(true);
+  const [subStatus, setSubStatus] = useState<UserSubscriptionStatus | null>(null);
+  const [stats, setStats] = useState<{
+    completedExams: number;
+    avgScore: number;
+    streakDays: number;
+    totalAttempts: number;
+  }>({
+    completedExams: 0,
+    avgScore: 0,
+    streakDays: 0,
+    totalAttempts: 0,
+  });
   const version: CurriculumVersion = user?.curriculumVersion || 'bangla';
   const isEnglishUi = version !== 'bangla';
 
@@ -56,20 +78,32 @@ const Dashboard = () => {
   );
   const [selectedStream, setSelectedStream] = useState<'my_stream' | 'science' | 'commerce' | 'humanities' | 'common' | 'optional' | 'all'>('my_stream');
 
-  // Board Questions State
-  const [boardExams, setBoardExams] = useState<Exam[]>([]);
-  const [boardStreamFilter, setBoardStreamFilter] = useState<'all' | 'science' | 'commerce' | 'humanities' | 'common'>('all');
-  const [boardYearFilter, setBoardYearFilter] = useState<number | 'all'>(2025);
-  const [boardSpecificFilter, setBoardSpecificFilter] = useState<string>('all');
-  const [loadingBoardExams, setLoadingBoardExams] = useState(false);
-  const [expandedYears, setExpandedYears] = useState<Record<number, boolean>>({});
+  interface RecentActivity {
+    hasActivity: boolean;
+    type: 'attempt' | 'recommended' | null;
+    activity: {
+      attemptId?: string;
+      examId: string;
+      score?: number;
+      totalAttempted?: number;
+      correctCount?: number;
+      wrongCount?: number;
+      status?: 'ongoing' | 'completed';
+      startedAt?: string;
+      submittedAt?: string;
+      examTitle: string;
+      durationMinutes: number;
+      totalMarks: number;
+      academicLevel: string;
+      curriculumVersion: string;
+      subjectId: string;
+      subjectName: string;
+      subjectNameBn: string;
+      questionCount: number;
+    } | null;
+  }
 
-  const toggleYearExpanded = (year: number) => {
-    setExpandedYears((prev) => ({
-      ...prev,
-      [year]: !prev[year],
-    }));
-  };
+  const [recentActivity, setRecentActivity] = useState<RecentActivity | null>(null);
 
   useEffect(() => {
     if (user?.academicLevel) {
@@ -78,6 +112,57 @@ const Dashboard = () => {
       setSelectedLevel(getDefaultLevelForVersion(version));
     }
   }, [user?.academicLevel, version]);
+
+  useEffect(() => {
+    const fetchRecentActivity = async () => {
+      try {
+        const data = await apiJson<RecentActivity>(
+          `/api/user/recent-activity?academicLevel=${selectedLevel}&curriculumVersion=${version}`
+        );
+        if (data) {
+          setRecentActivity(data);
+        }
+      } catch (err) {
+        console.error('Failed to load recent activity:', err);
+      }
+    };
+
+    if (user) {
+      void fetchRecentActivity();
+    }
+  }, [user, selectedLevel, version]);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const data = await apiJson<{
+          completedExams: number;
+          avgScore: number;
+          streakDays: number;
+          totalAttempts: number;
+        }>('/api/user/stats');
+        if (data) {
+          setStats(data);
+        }
+      } catch (err) {
+        console.error('Failed to load user stats:', err);
+      }
+    };
+
+    const fetchSubStatus = async () => {
+      try {
+        const data = await apiJson<UserSubscriptionStatus>('/api/user/subscription-status');
+        setSubStatus(data);
+      } catch (err) {
+        console.error('Failed to load subscription status:', err);
+      }
+    };
+
+    if (user) {
+      fetchStats();
+      fetchSubStatus();
+    }
+  }, [user]);
 
   useEffect(() => {
     // If student has not selected a curriculum version yet, prompt them
@@ -93,11 +178,26 @@ const Dashboard = () => {
         if (version) queryParams.set('version', version);
         if (selectedLevel) queryParams.set('level', selectedLevel);
 
-        if (selectedStream === 'my_stream') {
-          queryParams.set('stream', userStream);
-          queryParams.set('include_common', 'true');
-        } else if (selectedStream !== 'all') {
-          queryParams.set('stream', selectedStream);
+        if (user?.role !== 'admin') {
+          // Strictly isolate student subjects to their own stream + compulsory
+          if (selectedStream === 'common') {
+            queryParams.set('stream', 'common');
+          } else if (selectedStream === 'optional') {
+            queryParams.set('stream', 'optional');
+          } else if (selectedStream === 'stream_core') {
+            queryParams.set('stream', userStream);
+          } else {
+            // 'my_stream' or 'all' - show full student syllabus (stream + common + optional)
+            queryParams.set('stream', userStream);
+            queryParams.set('include_common', 'true');
+          }
+        } else {
+          if (selectedStream === 'my_stream') {
+            queryParams.set('stream', userStream);
+            queryParams.set('include_common', 'true');
+          } else if (selectedStream !== 'all') {
+            queryParams.set('stream', selectedStream);
+          }
         }
 
         const data = await apiJson<Subject[]>(`/api/subjects?${queryParams.toString()}`);
@@ -110,73 +210,6 @@ const Dashboard = () => {
     };
     fetchData();
   }, [version, selectedLevel, selectedStream, userStream, user, navigate]);
-
-  // Fetch Board Question Exams
-  useEffect(() => {
-    const fetchBoardExams = async () => {
-      setLoadingBoardExams(true);
-      try {
-        const data = await apiJson<Exam[]>(`/api/exams?academicLevel=${selectedLevel}&examType=board_question&version=${version}`);
-        const examList = data || [];
-        setBoardExams(examList);
-
-        // Auto-select the latest available year (e.g. 2025)
-        const years = Array.from(
-          new Set(examList.map((e) => e.examYear).filter((y): y is number => typeof y === 'number'))
-        ).sort((a, b) => b - a);
-
-        if (years.length > 0) {
-          setBoardYearFilter((prev) => (typeof prev === 'number' && years.includes(prev) ? prev : years[0]));
-        }
-      } catch (err) {
-        console.error('Failed to load board exams:', err);
-      } finally {
-        setLoadingBoardExams(false);
-      }
-    };
-    fetchBoardExams();
-  }, [selectedLevel, version]);
-
-  // Extract distinct years and boards available for selected level
-  const availableBoardYears = Array.from(
-    new Set(boardExams.map((e) => e.examYear).filter((y): y is number => typeof y === 'number'))
-  ).sort((a, b) => b - a);
-
-  const availableBoards = Array.from(
-    new Set(boardExams.map((e) => e.boardName).filter((b): b is string => Boolean(b)))
-  );
-
-  const filteredBoardExams = boardExams.filter((exam) => {
-    if (boardStreamFilter !== 'all' && exam.subjectStream !== boardStreamFilter) return false;
-    if (boardYearFilter !== 'all' && exam.examYear !== boardYearFilter) return false;
-    if (boardSpecificFilter !== 'all' && exam.boardName !== boardSpecificFilter) return false;
-    return true;
-  });
-
-  // Group filtered exams by Year
-  const groupedBoardExamsByYear = availableBoardYears.reduce<Record<number, Exam[]>>((acc, yr) => {
-    const matched = filteredBoardExams.filter((e) => e.examYear === yr);
-    if (matched.length > 0) {
-      acc[yr] = matched;
-    }
-    return acc;
-  }, {});
-
-  // Quick switch level and persist to user profile
-  const handleLevelChange = async (level: AcademicLevel) => {
-    setSelectedLevel(level);
-    if (user) {
-      try {
-        await apiJson('/api/user/curriculum-version', {
-          method: 'PUT',
-          body: JSON.stringify({ academicLevel: level }),
-        });
-        useAuthStore.getState().setAcademicLevel(level);
-      } catch (err) {
-        console.error('Failed to update academic level:', err);
-      }
-    }
-  };
 
   const getStreamBadge = (stream?: string) => {
     if (isEnglishUi) {
@@ -319,6 +352,9 @@ const Dashboard = () => {
 
   const renderSubjectCard = (subject: Subject, idx: number) => {
     const badge = getStreamBadge(subject.stream);
+    const isSubscribed = user?.role === 'admin' || user?.isSubscribed || subStatus?.isSubscribed;
+    const isLocked = !isSubscribed && subStatus && !subStatus.canTakeExam;
+
     return (
       <motion.div
         key={subject.id}
@@ -328,11 +364,19 @@ const Dashboard = () => {
         whileHover={{ y: -4 }}
       >
         <Link to={`/subjects/${subject.id}`}>
-          <Card className="group hover:border-blue-500 hover:shadow-lg transition-all cursor-pointer overflow-hidden border-slate-200 shadow-sm rounded-2xl h-full bg-white flex flex-col justify-between">
+          <Card className={`group transition-all cursor-pointer overflow-hidden border shadow-sm rounded-2xl h-full bg-white flex flex-col justify-between ${
+            isLocked
+              ? 'border-amber-200/80 hover:border-amber-400 hover:shadow-md'
+              : 'border-slate-200 hover:border-blue-500 hover:shadow-lg'
+          }`}>
             <CardHeader className="p-6 pb-4">
               <div className="flex items-start justify-between mb-4">
-                <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600 border border-blue-100 group-hover:bg-blue-600 group-hover:text-white transition-colors">
-                  <BookMarked className="w-6 h-6" />
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-colors ${
+                  isLocked
+                    ? 'bg-amber-50 text-amber-600 border-amber-200 group-hover:bg-amber-600 group-hover:text-white'
+                    : 'bg-blue-50 text-blue-600 border-blue-100 group-hover:bg-blue-600 group-hover:text-white'
+                }`}>
+                  {isLocked ? <Lock className="w-6 h-6" /> : <BookMarked className="w-6 h-6" />}
                 </div>
                 <div className="flex items-center gap-1.5 flex-wrap justify-end">
                   {subject.stream && (
@@ -340,19 +384,27 @@ const Dashboard = () => {
                       {badge.label}
                     </span>
                   )}
-                  {Number(subject.unlockPrice) === 0 ? (
-                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
+                  {isSubscribed ? (
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-emerald-600" />
                       {isEnglishUi ? 'Free' : 'ফ্রি'}
                     </span>
+                  ) : isLocked ? (
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-200 text-xs font-bold flex items-center gap-1">
+                      <Lock className="w-3 h-3 text-amber-600" />
+                      {isEnglishUi ? 'Locked' : 'লকড'}
+                    </span>
                   ) : (
-                    <span className="px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-bold">
-                      {isEnglishUi ? 'Premium' : 'প্রিমিয়াম'}
+                    <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
+                      {isEnglishUi ? 'Free' : 'ফ্রি'}
                     </span>
                   )}
                 </div>
               </div>
 
-              <CardTitle className="text-xl font-bold text-slate-800 group-hover:text-blue-600 transition-colors line-clamp-1">
+              <CardTitle className={`text-xl font-bold transition-colors line-clamp-1 ${
+                isLocked ? 'text-slate-800 group-hover:text-amber-700' : 'text-slate-800 group-hover:text-blue-600'
+              }`}>
                 {isEnglishUi ? subject.name : subject.nameBn}
               </CardTitle>
               <p className="text-xs text-slate-400 font-sans mt-0.5 truncate">
@@ -363,9 +415,16 @@ const Dashboard = () => {
             <CardContent className="px-6 pb-6 pt-0">
               <div className="flex items-center justify-between pt-4 border-t border-slate-100 text-xs text-slate-500">
                 <span>{isEnglishUi ? '20+ Model Tests' : '২০+ মডেল টেস্ট'}</span>
-                <div className="flex items-center text-blue-600 font-bold group-hover:translate-x-1 transition-transform">
-                  {isEnglishUi ? 'View Exams' : 'পরীক্ষাসমূহ'} <ChevronRight className="w-4 h-4 ml-1" />
-                </div>
+                {isLocked ? (
+                  <div className="flex items-center text-amber-600 font-bold group-hover:translate-x-1 transition-transform">
+                    <Lock className="w-3.5 h-3.5 mr-1" />
+                    {isEnglishUi ? 'Locked' : 'লকড'} <ChevronRight className="w-4 h-4 ml-0.5" />
+                  </div>
+                ) : (
+                  <div className="flex items-center text-blue-600 font-bold group-hover:translate-x-1 transition-transform">
+                    {isEnglishUi ? 'View Exams' : 'পরীক্ষাসমূহ'} <ChevronRight className="w-4 h-4 ml-1" />
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -432,69 +491,141 @@ const Dashboard = () => {
       <Navbar />
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-8 space-y-8">
-        {/* Top Welcome Header with Progress Cards */}
-        <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white p-6 sm:p-8 rounded-3xl border border-slate-200/90 shadow-sm">
+        {/* Top Header with Quick Practice Summary & Profile Link */}
+        <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 bg-white p-5 sm:p-7 rounded-3xl border border-slate-200/90 shadow-sm">
           <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-semibold mb-3">
-              <span className="font-bold uppercase tracking-wider">{selectedLevel.toUpperCase()}</span>
-              <span>•</span>
-              <span className="font-medium">{getUserStreamNameBn(userStream)}</span>
-              <span>•</span>
-              {renderCurriculumBadge()}
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                {isEnglishUi ? 'Online Practice Arena' : 'অনলাইন অনুশীলন ও মডেল টেস্ট'}
+              </span>
             </div>
-            <h1 className="text-2xl sm:text-4xl font-bold text-slate-900 tracking-tight">
-              {isEnglishUi ? (
-                <>Welcome, <span className="text-blue-600">{user?.fullName || 'Student'}</span>!</>
-              ) : (
-                <>স্বাগতম, <span className="text-blue-600">{user?.fullName || 'শিক্ষার্থী'}</span>!</>
-              )}
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">
+              {isEnglishUi ? 'Practice Dashboard' : 'অনুশীলন ড্যাশবোর্ড'}
             </h1>
-            <p className="text-slate-500 text-base sm:text-lg mt-1">
+            <p className="text-slate-500 text-sm sm:text-base mt-0.5">
               {isEnglishUi
-                ? `Ready to practice today? Ensure comprehensive preparation for your ${selectedLevel.toUpperCase()} examinations.`
-                : `আজ কী অনুশীলন করতে চাও? ${selectedLevel.toUpperCase()} বোর্ড পরীক্ষায় নিশ্চিত করো পূর্ণাঙ্গ প্রস্তুতি।`}
+                ? 'Select your subjects and prepare with comprehensive chapter tests and board questions.'
+                : 'তোমার নির্ধারিত সিলেবাসের বিষয়ভিত্তিক অধ্যায় ও বিগত বছরের বোর্ড প্রশ্নাবলি অনুশীলন করো।'}
             </p>
           </div>
 
           {/* Right Progress Summary Small Cards */}
-          <div className="grid grid-cols-3 gap-3 sm:gap-4 shrink-0">
-            <div className="p-3.5 sm:p-4 rounded-2xl bg-blue-50/70 border border-blue-100 text-center">
-              <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center mx-auto mb-1.5 shadow-sm">
-                <CheckCircle2 className="w-4 h-4" />
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 shrink-0">
+              <div className="p-3 rounded-2xl bg-blue-50/70 border border-blue-100 text-center transition-all hover:shadow-md hover:border-blue-200">
+                <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center mx-auto mb-1 shadow-sm">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                </div>
+                <div className="text-base sm:text-lg font-bold text-slate-900 font-sans">
+                  {isEnglishUi ? stats.completedExams.toString() : `${toBnNumber(stats.completedExams)}টি`}
+                </div>
+                <div className="text-[10px] text-slate-500 font-medium">
+                  {isEnglishUi ? 'Completed' : 'সমাপ্ত পরীক্ষা'}
+                </div>
               </div>
-              <div className="text-lg sm:text-xl font-bold text-slate-900 font-sans">
-                {isEnglishUi ? '5' : '৫টি'}
-              </div>
-              <div className="text-[11px] text-slate-500">
-                {isEnglishUi ? 'Completed' : 'পরীক্ষা দিয়েছো'}
-              </div>
-            </div>
 
-            <div className="p-3.5 sm:p-4 rounded-2xl bg-emerald-50/70 border border-emerald-100 text-center">
-              <div className="w-8 h-8 rounded-xl bg-emerald-600 text-white flex items-center justify-center mx-auto mb-1.5 shadow-sm">
-                <Trophy className="w-4 h-4" />
+              <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-100 text-center transition-all hover:shadow-md hover:border-emerald-200">
+                <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center mx-auto mb-1 shadow-sm">
+                  <Trophy className="w-3.5 h-3.5" />
+                </div>
+                <div className="text-base sm:text-lg font-bold text-slate-900 font-sans">
+                  {isEnglishUi ? `${stats.avgScore}%` : `${toBnNumber(stats.avgScore)}%`}
+                </div>
+                <div className="text-[10px] text-slate-500 font-medium">
+                  {isEnglishUi ? 'Avg Score' : 'গড় স্কোর'}
+                </div>
               </div>
-              <div className="text-lg sm:text-xl font-bold text-slate-900 font-sans">
-                {isEnglishUi ? '82%' : '৮২%'}
-              </div>
-              <div className="text-[11px] text-slate-500">
-                {isEnglishUi ? 'Avg Score' : 'গড় স্কোর'}
-              </div>
-            </div>
 
-            <div className="p-3.5 sm:p-4 rounded-2xl bg-amber-50/70 border border-amber-100 text-center">
-              <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center mx-auto mb-1.5 shadow-sm">
-                <Flame className="w-4 h-4" />
+              <div className="p-3 rounded-2xl bg-amber-50/70 border border-amber-100 text-center transition-all hover:shadow-md hover:border-amber-200">
+                <div className="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center mx-auto mb-1 shadow-sm">
+                  <Flame className="w-3.5 h-3.5" />
+                </div>
+                <div className="text-base sm:text-lg font-bold text-slate-900 font-sans">
+                  {isEnglishUi
+                    ? `${stats.streakDays}d`
+                    : `${toBnNumber(stats.streakDays)} দিন`}
+                </div>
+                <div className="text-[10px] text-slate-500 font-medium">
+                  {isEnglishUi ? 'Streak 🔥' : 'স্ট্রিক 🔥'}
+                </div>
               </div>
-              <div className="text-lg sm:text-xl font-bold text-slate-900 font-sans">
-                {isEnglishUi ? '3 Days' : '৩ দিন'}
-              </div>
-              <div className="text-[11px] text-slate-500">
-                {isEnglishUi ? 'Streak 🔥' : 'স্ট্রিক 🔥'}
-              </div>
+
+              {/* Subscription Status Card */}
+              <Link
+                to="/subscription"
+                className={`p-3 rounded-2xl border text-center transition-all hover:shadow-md block ${
+                  user?.isSubscribed || subStatus?.isSubscribed
+                    ? 'bg-teal-50/80 border-teal-200 hover:border-teal-300'
+                    : 'bg-orange-50/80 border-orange-200 hover:border-orange-300'
+                }`}
+              >
+                <div
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center mx-auto mb-1 shadow-sm text-white ${
+                    user?.isSubscribed || subStatus?.isSubscribed
+                      ? 'bg-teal-600'
+                      : 'bg-orange-500'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                </div>
+                <div className="text-base sm:text-lg font-bold text-slate-900 font-sans">
+                  {user?.isSubscribed || subStatus?.isSubscribed
+                    ? 'PRO'
+                    : `${subStatus ? subStatus.freeTestsRemaining : 3}/3`}
+                </div>
+                <div className="text-[10px] text-slate-500 font-medium">
+                  {user?.isSubscribed || subStatus?.isSubscribed
+                    ? (isEnglishUi ? 'Unlimited' : 'আনলিমিটেড')
+                    : (isEnglishUi ? 'Free Tests' : 'ফ্রি টেস্ট বাকি')}
+                </div>
+              </Link>
             </div>
           </div>
         </header>
+
+        {/* Free Quota Notice if student has not subscribed yet */}
+        {subStatus && !subStatus.isSubscribed && user?.role !== 'admin' && (
+          <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/5 border border-amber-300/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white font-extrabold flex flex-col items-center justify-center shadow-sm shrink-0 font-sans">
+                <span className="text-base leading-none">{subStatus.freeTestsUsed}</span>
+                <span className="text-[9px] uppercase tracking-tighter opacity-90">of 3 used</span>
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
+                    {isEnglishUi ? '3 Free Tests Policy' : '৩টি ফ্রি টেস্ট নীতি'}
+                  </span>
+                  <span className="text-xs text-slate-500 font-medium">
+                    {subStatus.canTakeExam
+                      ? isEnglishUi
+                        ? `${subStatus.freeTestsRemaining} test(s) left`
+                        : `${subStatus.freeTestsRemaining}টি টেস্ট ফ্রি বাকি আছে`
+                      : isEnglishUi
+                        ? 'Quota reached'
+                        : 'কোটা সমাপ্ত'}
+                  </span>
+                </div>
+                <h3 className="text-sm font-bold text-slate-900 mt-1">
+                  {subStatus.canTakeExam
+                    ? isEnglishUi
+                      ? 'You can attempt any 3 tests across the entire platform before subscribing.'
+                      : 'বোর্ড প্রশ্ন বা যেকোনো বিষয়ের মোট ৩টি পরীক্ষা বিনামূল্যে দিতে পারবে।'
+                    : isEnglishUi
+                      ? 'You have reached your 3 free tests limit. Subscribe for unlimited access.'
+                      : 'তোমার ৩টি ফ্রি টেস্ট শেষ হয়েছে। বাকি সব পরীক্ষা দিতে সাবস্ক্রিপশন গ্রহণ করো।'}
+                </h3>
+              </div>
+            </div>
+            <Link to="/subscription" className="shrink-0">
+              <Button className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-2xl text-xs gap-1.5 shadow-md shadow-amber-500/20 px-4 py-2.5 h-auto cursor-pointer">
+                <Sparkles className="w-4 h-4" />
+                {isEnglishUi ? 'View Subscription Plans' : 'সাবস্ক্রিপশন প্যাকেজ দেখুন'}
+              </Button>
+            </Link>
+          </div>
+        )}
 
         {/* Top Banner Image with a_boy_reading.png */}
         <div className="relative rounded-3xl overflow-hidden border border-slate-200/90 shadow-md h-[220px] sm:h-[260px] bg-slate-900">
@@ -533,87 +664,17 @@ const Dashboard = () => {
         {/* Section: Academic Level & Stream Filter Controls */}
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
-            {/* Dynamic Academic Level Switcher Buttons */}
-            <div className="flex items-center p-1.5 bg-slate-200/70 rounded-2xl border border-slate-300/70">
-              {version === 'british' ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleLevelChange('alevel')}
-                    className={`px-6 py-2 rounded-xl text-base font-bold transition-all cursor-pointer ${selectedLevel === 'alevel'
-                        ? 'bg-blue-600 text-white shadow-md'
-                        : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                  >
-                    A Level (Grade 11-12)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleLevelChange('olevel')}
-                    className={`px-6 py-2 rounded-xl text-base font-bold transition-all cursor-pointer ${selectedLevel === 'olevel'
-                        ? 'bg-blue-600 text-white shadow-md'
-                        : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                  >
-                    O Level / IGCSE (Grade 9-10)
-                  </button>
-                </>
-              ) : version === 'ib' ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleLevelChange('dp')}
-                    className={`px-6 py-2 rounded-xl text-base font-bold transition-all cursor-pointer ${selectedLevel === 'dp'
-                        ? 'bg-blue-600 text-white shadow-md'
-                        : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                  >
-                    IB DP (Diploma Programme)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleLevelChange('myp')}
-                    className={`px-6 py-2 rounded-xl text-base font-bold transition-all cursor-pointer ${selectedLevel === 'myp'
-                        ? 'bg-blue-600 text-white shadow-md'
-                        : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                  >
-                    IB MYP (Middle Years)
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => handleLevelChange('hsc')}
-                    className={`px-6 py-2 rounded-xl text-base font-bold transition-all cursor-pointer ${selectedLevel === 'hsc'
-                        ? 'bg-blue-600 text-white shadow-md'
-                        : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                  >
-                    {isEnglishUi ? 'HSC (Grade 11-12)' : 'HSC (একাদশ-দ্বাদশ)'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleLevelChange('ssc')}
-                    className={`px-6 py-2 rounded-xl text-base font-bold transition-all cursor-pointer ${selectedLevel === 'ssc'
-                        ? 'bg-blue-600 text-white shadow-md'
-                        : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                  >
-                    {isEnglishUi ? 'SSC (Grade 9-10)' : 'SSC (নবম-দশম)'}
-                  </button>
-                </>
-              )}
+            {/* Locked Academic Level Display — read-only, cannot be changed after signup */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-sm shadow-md select-none">
+                <GraduationCap className="w-4 h-4 shrink-0" />
+                <span>{getLevelDisplayName(selectedLevel)}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs font-semibold text-slate-500 select-none">
+                <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
+                {isEnglishUi ? 'Locked — set during registration' : 'লক — নিবন্ধনের সময় নির্ধারিত'}
+              </div>
             </div>
-
-            <Link
-              to="/select-version"
-              className="text-xs font-semibold px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:text-blue-600 transition-colors shadow-xs inline-flex items-center gap-1.5"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-blue-500" />
-              {isEnglishUi ? 'Switch Curriculum & Stream' : 'কারিকুলাম ও বিভাগ পরিবর্তন'}
-            </Link>
           </div>
 
           {/* Group / Stream Filter Pills */}
@@ -622,58 +683,32 @@ const Dashboard = () => {
               {isEnglishUi ? 'Filter:' : 'ফিল্টার:'}
             </span>
 
-            {/* My Stream Personalized Option */}
+            {/* All My Subjects */}
             <button
               type="button"
               onClick={() => setSelectedStream('my_stream')}
-              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${selectedStream === 'my_stream'
+              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${selectedStream === 'my_stream' || selectedStream === 'all'
                   ? 'bg-blue-600 text-white shadow-sm'
                   : 'bg-white border border-blue-200 text-blue-700 hover:bg-blue-50'
                 }`}
             >
               <Star className="w-3.5 h-3.5 fill-current" />
               {isEnglishUi
-                ? `My Stream (${getUserStreamNameBn(userStream).split(' ')[0]})`
-                : `আমার পাঠ্যসূচি (${getUserStreamNameBn(userStream).split(' ')[0]})`}
+                ? `All My Subjects (${getUserStreamNameBn(userStream).split(' ')[0]})`
+                : `আমার সকল বিষয় (${getUserStreamNameBn(userStream).split(' ')[0]})`}
             </button>
 
-            {/* Science Option */}
+            {/* Core Stream Group */}
             <button
               type="button"
-              onClick={() => setSelectedStream('science')}
-              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${selectedStream === 'science'
+              onClick={() => setSelectedStream('stream_core')}
+              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${selectedStream === 'stream_core'
                   ? 'bg-cyan-600 text-white shadow-sm'
                   : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
                 }`}
             >
               <span className="w-2 h-2 rounded-full bg-cyan-500" />
-              {isEnglishUi ? 'Science' : 'বিজ্ঞান বিভাগ (Science)'}
-            </button>
-
-            {/* Commerce Option */}
-            <button
-              type="button"
-              onClick={() => setSelectedStream('commerce')}
-              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${selectedStream === 'commerce'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
-                }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              {isEnglishUi ? 'Business Studies' : 'ব্যবসায় শিক্ষা (Commerce)'}
-            </button>
-
-            {/* Humanities Option */}
-            <button
-              type="button"
-              onClick={() => setSelectedStream('humanities')}
-              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${selectedStream === 'humanities'
-                  ? 'bg-amber-600 text-white shadow-sm'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
-                }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-amber-500" />
-              {isEnglishUi ? 'Humanities' : 'মানবিক বিভাগ (Humanities)'}
+              {getUserStreamNameBn(userStream)}
             </button>
 
             {/* Compulsory Option */}
@@ -689,417 +724,185 @@ const Dashboard = () => {
               {isEnglishUi ? 'Core Compulsory' : 'আবশ্যিক বিষয় (Compulsory)'}
             </button>
 
-            {/* Optional 4th Subject Option */}
+            {/* Optional Option */}
             <button
               type="button"
               onClick={() => setSelectedStream('optional')}
               className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${selectedStream === 'optional'
-                  ? 'bg-indigo-600 text-white shadow-sm'
+                  ? 'bg-emerald-600 text-white shadow-sm'
                   : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
                 }`}
             >
-              <span className="w-2 h-2 rounded-full bg-indigo-500" />
-              {isEnglishUi ? 'Electives' : 'ঐচ্ছিক বিষয় (Optional)'}
-            </button>
-
-            {/* All Option */}
-            <button
-              type="button"
-              onClick={() => setSelectedStream('all')}
-              className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer shrink-0 ${selectedStream === 'all'
-                  ? 'bg-slate-800 text-white shadow-sm'
-                  : 'bg-white border border-slate-200 text-slate-600 hover:border-slate-300'
-                }`}
-            >
-              {isEnglishUi ? 'All Subjects' : 'সকল বিষয়'}
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              {isEnglishUi ? 'Optional Subjects' : 'ঐচ্ছিক বিষয় (Optional)'}
             </button>
           </div>
         </div>
 
-        {/* Section: Continue where you left off */}
-        {subjects.length > 0 && (
-          <div className="p-5 sm:p-6 rounded-3xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-100">
-                <PlayCircle className="w-6 h-6" />
-              </div>
-              <div>
-                <div className="text-xs font-bold text-blue-600 uppercase tracking-wider">
-                  {isEnglishUi
-                    ? `Continue Where You Left Off (${selectedLevel.toUpperCase()})`
-                    : `যেখান থেকে শেষ করেছিলে (${selectedLevel.toUpperCase()})`}
-                </div>
-                <div className="text-lg font-bold text-slate-900">
-                  {isEnglishUi ? subjects[0].name : subjects[0].nameBn} — {isEnglishUi ? 'Model Test 1' : 'মডেল টেস্ট ১'}
-                </div>
-                <div className="text-xs text-slate-500">
-                  {isEnglishUi
-                    ? '10 Questions • 15 Minutes • Recent Score: 8/10'
-                    : '১০টি প্রশ্ন • ১৫ মিনিট • সর্বশেষ স্কোর: ৮/১০'}
-                </div>
-              </div>
-            </div>
-            <Link to={`/subjects/${subjects[0].id}`}>
-              <Button variant="outline" className="rounded-xl font-semibold text-slate-700 hover:text-blue-600 hover:border-blue-300 gap-1.5 cursor-pointer">
-                {isEnglishUi ? 'Continue' : 'চালিয়ে যাও'} <ChevronRight className="w-4 h-4" />
-              </Button>
-            </Link>
-          </div>
-        )}
+        {/* Section: Continue where you left off - Vibrant Animated Gradient Rim & Rounded Motion Design */}
+        {(() => {
+          const act = recentActivity?.activity;
+          if (!act && subjects.length === 0) return null;
 
-        {/* Section: Past Board / Examination Papers Archive */}
-        <section className="p-6 sm:p-8 rounded-3xl bg-white border border-slate-200/90 shadow-sm space-y-5">
-          {/* Header Title & Subtitle Area (Spacious & Refined) */}
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-50 border border-blue-200/70 text-blue-700 text-xs font-bold">
-              <GraduationCap className="w-4 h-4 text-blue-600" />
-              {version === 'british'
-                ? `Past Papers Archive • ${selectedLevel === 'alevel' ? 'A Level' : 'O Level'} (2020 - 2025)`
-                : version === 'ib'
-                  ? `IB Past Assessments • ${selectedLevel === 'dp' ? 'IB DP' : 'IB MYP'} (2021 - 2025)`
-                  : version === 'english'
-                    ? `Board Question Bank • ${selectedLevel.toUpperCase()} (2018 - 2025)`
-                    : `বোর্ড প্রশ্ন ব্যাংক • ${selectedLevel.toUpperCase()} (২০১৬ - ২০২৫)`}
-            </div>
+          const isOngoing = act?.status === 'ongoing';
+          const isCompleted = act?.status === 'completed';
 
-            <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 flex items-center gap-3 flex-wrap">
-              <span>
-                {version === 'british'
-                  ? `${selectedLevel === 'alevel' ? 'A Level' : 'O Level'} Cambridge & Edexcel Past Question Papers`
-                  : version === 'ib'
-                    ? `${selectedLevel === 'dp' ? 'IB DP' : 'IB MYP'} Past Examination Papers & Markschemes`
-                    : version === 'english'
-                      ? `${selectedLevel.toUpperCase()} Past Board Examination Papers & Solutions`
-                      : `${selectedLevel.toUpperCase()} বিগত বছরের বোর্ড পরীক্ষার প্রশ্ন ও সমাধান`}
-              </span>
-              <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-                {version === 'british'
-                  ? 'CAIE & Edexcel Verified'
-                  : version === 'ib'
-                    ? 'IBO Verified Markschemes'
-                    : isEnglishUi
-                      ? 'Verified Answers & Explanations'
-                      : 'ব্যাখ্যাসহ নির্ভুল উত্তরমালা'}
-              </span>
-            </h2>
+          const examTitle = act?.examTitle || (isEnglishUi ? 'Model Test 1' : 'মডেল টেস্ট ১');
+          const subjectTitle = act
+            ? (isEnglishUi ? act.subjectName : act.subjectNameBn)
+            : (subjects[0] ? (isEnglishUi ? subjects[0].name : subjects[0].nameBn) : '');
+          const questionCount = act?.questionCount || 10;
+          const durationMinutes = act?.durationMinutes || 15;
+          const recentScore = act?.score;
+          const totalMarks = act?.totalMarks || 25;
+          const targetLink = act
+            ? `/exam/${act.examId}/start`
+            : (subjects[0] ? `/subjects/${subjects[0].id}` : '/dashboard');
 
-            <p className="text-slate-500 text-xs sm:text-[12.5px] md:text-[13px] leading-relaxed max-w-4xl xl:max-w-5xl font-normal">
-              {version === 'british'
-                ? 'Practice official Cambridge Assessment International Education (CAIE) and Pearson Edexcel past question papers with verified answers and real-time timers.'
-                : version === 'ib'
-                  ? 'Practice official International Baccalaureate (IB) assessment papers with structured markschemes and real exam pacing.'
-                  : isEnglishUi
-                    ? 'Practice official board exam papers across Science, Business Studies, and Humanities with real-time timers and instant solutions.'
-                    : 'বিজ্ঞান, ব্যবসায় শিক্ষা ও মানবিক বিভাগের সকল সাধারণ শিক্ষা বোর্ডের প্রশ্নপত্র সময় ধরে পরীক্ষা দিয়ে প্রস্তুতি নাও।'}
-            </p>
-          </div>
+          return (
+            <div className="relative rounded-[32px] p-[2.5px] bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 shadow-xl shadow-emerald-950/10 hover:shadow-emerald-700/20 transition-all duration-500 overflow-hidden group">
+              {/* Inner Card Container with crisp white background & soft brand accents */}
+              <div className="rounded-[30px] bg-white p-5 sm:p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-5 relative overflow-hidden">
+                {/* Background Subtle Ambient Brand Glows */}
+                <div className="absolute -right-16 -top-16 w-56 h-56 rounded-full bg-emerald-100/40 blur-3xl pointer-events-none group-hover:scale-125 transition-transform duration-700" />
+                <div className="absolute -left-16 -bottom-16 w-56 h-56 rounded-full bg-teal-100/30 blur-3xl pointer-events-none group-hover:scale-125 transition-transform duration-700" />
 
-          {/* Filter Controls Bar: Stream Switcher Tabs & Exam Board Dropdown */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pt-3.5 border-t border-slate-100">
-            {/* Stream Switcher Tabs */}
-            <div className="flex items-center gap-1.5 p-1.5 bg-slate-100/80 rounded-2xl border border-slate-200/70 overflow-x-auto text-xs shrink-0 scrollbar-none">
-              <button
-                type="button"
-                onClick={() => setBoardStreamFilter('all')}
-                className={`px-3.5 py-2 rounded-xl font-bold transition-all cursor-pointer shrink-0 ${boardStreamFilter === 'all'
-                    ? 'bg-white text-slate-900 shadow-xs border border-slate-200'
-                    : 'text-slate-600 hover:text-slate-900'
-                  }`}
-              >
-                {isEnglishUi ? `All Groups (${boardExams.length})` : `সব বিভাগ (${boardExams.length})`}
-              </button>
-              <button
-                type="button"
-                onClick={() => setBoardStreamFilter('science')}
-                className={`px-3.5 py-2 rounded-xl font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${boardStreamFilter === 'science'
-                    ? 'bg-cyan-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-cyan-700'
-                  }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-cyan-400" />
-                {isEnglishUi ? 'Science' : 'বিজ্ঞান'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setBoardStreamFilter('commerce')}
-                className={`px-3.5 py-2 rounded-xl font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${boardStreamFilter === 'commerce'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-emerald-700'
-                  }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                {isEnglishUi ? 'Business Studies' : 'ব্যবসায় শিক্ষা'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setBoardStreamFilter('humanities')}
-                className={`px-3.5 py-2 rounded-xl font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${boardStreamFilter === 'humanities'
-                    ? 'bg-amber-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-amber-700'
-                  }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-amber-400" />
-                {isEnglishUi ? 'Humanities' : 'মানবিক'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setBoardStreamFilter('common')}
-                className={`px-3.5 py-2 rounded-xl font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${boardStreamFilter === 'common'
-                    ? 'bg-purple-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-purple-700'
-                  }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-purple-400" />
-                {isEnglishUi ? 'Compulsory' : 'আবশ্যিক'}
-              </button>
-            </div>
+                {/* Content area */}
+                <div className="flex items-start sm:items-center gap-4 sm:gap-5 relative z-10">
+                  {/* Pulsating Play Squircle with brand emerald glow matching the logo's graduation cap */}
+                  <div className="relative shrink-0 flex items-center justify-center">
+                    <span className="absolute -inset-1.5 rounded-2xl bg-gradient-to-tr from-emerald-700 via-emerald-600 to-teal-500 opacity-60 blur-xs group-hover:opacity-100 group-hover:scale-110 transition-all duration-300 animate-pulse" />
+                    <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-br from-[#006837] via-[#047857] to-[#059669] text-white flex items-center justify-center shadow-lg shadow-emerald-700/35 group-hover:rotate-3 transition-transform duration-300">
+                      <Play className="w-6 h-6 sm:w-7 sm:h-7 fill-white ml-0.5" />
+                    </div>
+                  </div>
 
-            {/* Specific Board Dropdown / Selector */}
-            {availableBoards.length > 0 && (
-              <div className="flex items-center gap-2 bg-slate-50/90 hover:bg-slate-100/70 p-1.5 rounded-2xl border border-slate-200/90 text-xs shrink-0 w-full sm:w-auto shadow-2xs transition-colors">
-                <span className="text-slate-700 font-bold px-2 shrink-0 flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="p-1 rounded-lg bg-blue-100/70 text-blue-600 flex items-center justify-center">
-                    <Building2 className="w-3.5 h-3.5" />
-                  </span>
-                  <span>
-                    {version === 'british'
-                      ? 'Exam Board:'
-                      : version === 'ib'
-                        ? 'Authority:'
-                        : isEnglishUi
-                          ? 'Board:'
-                          : 'বোর্ড:'}
-                  </span>
-                </span>
-                <select
-                  value={boardSpecificFilter}
-                  onChange={(e) => setBoardSpecificFilter(e.target.value)}
-                  className="bg-white text-slate-800 font-medium rounded-xl px-3 py-1.5 border border-slate-200 shadow-2xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 cursor-pointer text-xs w-full sm:w-auto min-w-[220px] transition-all"
-                >
-                  <option value="all">
-                    {version === 'british'
-                      ? 'All Exam Boards (CAIE & Edexcel)'
-                      : version === 'ib'
-                        ? 'International Baccalaureate (IB)'
-                        : isEnglishUi
-                          ? 'All Boards (8 General Boards)'
-                          : 'সকল বোর্ড (৮টি সাধারণ বোর্ড)'}
-                  </option>
-                  {availableBoards.map((bName) => (
-                    <option key={bName} value={bName}>
-                      {bName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
+                  {/* Text & Meta info */}
+                  <div className="space-y-1.5">
+                    {/* Eyebrow Pill with live blinking dot matching logo accents */}
+                    <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full font-black text-[11px] uppercase tracking-wider border shadow-xs ${
+                      isOngoing
+                        ? 'bg-rose-50 text-rose-700 border-rose-200'
+                        : 'bg-emerald-600/10 text-emerald-800 border-emerald-200/80'
+                    }`}>
+                      <span className="relative flex h-2 w-2">
+                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                          isOngoing ? 'bg-rose-500' : 'bg-emerald-500'
+                        }`} />
+                        <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                          isOngoing ? 'bg-rose-600' : 'bg-emerald-600'
+                        }`} />
+                      </span>
+                      <span>
+                        {isOngoing
+                          ? (isEnglishUi ? `Ongoing Exam (${selectedLevel.toUpperCase()})` : `চলমান পরীক্ষা (${selectedLevel.toUpperCase()})`)
+                          : isCompleted
+                          ? (isEnglishUi ? `Continue Where You Left Off (${selectedLevel.toUpperCase()})` : `যেখান থেকে শেষ করেছিলে (${selectedLevel.toUpperCase()})`)
+                          : (isEnglishUi ? `Recommended Starter (${selectedLevel.toUpperCase()})` : `প্রস্তাবিত টেস্ট (${selectedLevel.toUpperCase()})`)}
+                      </span>
+                    </div>
 
-          {/* Year-wise Quick Navigation Tabs */}
-          {availableBoardYears.length > 0 && (
-            <div className="flex items-center gap-2 overflow-x-auto scrollbar-none pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 text-xs border-b border-slate-100 pt-1">
-              <span className="text-slate-400 font-bold uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" />
-                {isEnglishUi ? 'Exam Year:' : 'পরীক্ষার সাল:'}
-              </span>
-              <button
-                type="button"
-                onClick={() => setBoardYearFilter('all')}
-                className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer shrink-0 ${boardYearFilter === 'all'
-                    ? 'bg-blue-600 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-              >
-                {isEnglishUi
-                  ? `All Years (${availableBoardYears[availableBoardYears.length - 1]} - ${availableBoardYears[0]})`
-                  : `সকল সাল (${availableBoardYears[availableBoardYears.length - 1]} - ${availableBoardYears[0]})`}
-              </button>
-              {availableBoardYears.map((year) => {
-                const countForYear = boardExams.filter((e) => e.examYear === year).length;
-                return (
-                  <button
-                    key={year}
-                    type="button"
-                    onClick={() => setBoardYearFilter(year)}
-                    className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${boardYearFilter === year
-                        ? 'bg-blue-600 text-white shadow-xs'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                      }`}
-                  >
-                    <span>{getShortLevelName(selectedLevel)} {year}</span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${boardYearFilter === year ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-600'
-                      }`}>
-                      {countForYear}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+                    {/* Exam & Subject Title */}
+                    <h3 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight group-hover:text-emerald-700 transition-colors">
+                      {subjectTitle} — <span className="text-emerald-900">{examTitle}</span>
+                    </h3>
 
-          {/* Board Questions Cards Section (Year-Wise Grouped Display) */}
-          {loadingBoardExams ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-44 bg-slate-100 rounded-2xl border border-slate-200" />
-              ))}
-            </div>
-          ) : Object.keys(groupedBoardExamsByYear).length === 0 ? (
-            <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200">
-              <BookOpen className="w-8 h-8 mx-auto text-slate-400 mb-2" />
-              <p className="text-slate-500 text-sm">
-                {isEnglishUi
-                  ? 'No past examination questions found for the selected filter.'
-                  : 'নির্বাচিত ফিল্টারে বর্তমানে কোনো বোর্ড প্রশ্ন পাওয়া যায়নি।'}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-8">
-              {Object.keys(groupedBoardExamsByYear)
-                .map(Number)
-                .sort((a, b) => b - a)
-                .map((year) => {
-                  const examsInYear = groupedBoardExamsByYear[year];
-                  const isExpanded = Boolean(expandedYears[year]);
-                  const displayedExams = isExpanded ? examsInYear : examsInYear.slice(0, 4);
-
-                  return (
-                    <div key={year} className="space-y-4">
-                      <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
-                          <h3 className="text-lg font-bold text-slate-900">
-                            {version === 'british'
-                              ? `${selectedLevel === 'alevel' ? 'A Level' : 'O Level'} ${year} Past Question Papers`
-                              : version === 'ib'
-                                ? `${selectedLevel === 'dp' ? 'IB DP' : 'IB MYP'} ${year} Assessment Papers`
-                                : version === 'english'
-                                  ? `${selectedLevel.toUpperCase()} ${year} Board Examination Papers`
-                                  : `${selectedLevel.toUpperCase()} ${year} বোর্ড পরীক্ষার প্রশ্নপত্র`}
-                          </h3>
-                          <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 font-sans">
-                            {isEnglishUi ? `${examsInYear.length} Question Papers` : `${examsInYear.length}টি পরীক্ষা`}
-                          </span>
-                        </div>
-                        <span className="text-xs text-slate-500 hidden sm:inline">
-                          {version === 'british'
-                            ? 'Cambridge Assessment (CAIE) & Pearson Edexcel Past Papers'
-                            : version === 'ib'
-                              ? 'International Baccalaureate Organization Assessment Series'
-                              : isEnglishUi
-                                ? '8 General Education Boards Questions & Solutions'
-                                : '৮টি সাধারণ শিক্ষা বোর্ডের প্রশ্ন ও সমাধান'}
+                    {/* Metadata Chips: Questions, Time, Score */}
+                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-white/90 text-slate-700 text-xs font-semibold border border-slate-200/80 shadow-xs">
+                        <HelpCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        {toBnNumber(questionCount)} {isEnglishUi ? 'Questions' : 'টি প্রশ্ন'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-white/90 text-slate-700 text-xs font-semibold border border-slate-200/80 shadow-xs">
+                        <Clock className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                        {toBnNumber(durationMinutes)} {isEnglishUi ? 'Minutes' : 'মিনিট'}
+                      </span>
+                      {recentScore !== undefined && recentScore !== null && (
+                        <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 text-xs font-black border border-emerald-200/80 shadow-xs">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          {isEnglishUi ? 'Recent Score:' : 'সর্বশেষ স্কোর:'} {toBnNumber(recentScore)}/{toBnNumber(totalMarks)}
                         </span>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                        {displayedExams.map((exam) => (
-                          <div
-                            key={exam.id}
-                            className="group p-5 rounded-2xl bg-slate-50/70 hover:bg-white border border-slate-200 hover:border-blue-300 hover:shadow-md transition-all flex flex-col justify-between"
-                          >
-                            <div>
-                              <div className="flex items-center justify-between gap-2 mb-2.5">
-                                <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 border border-blue-200 font-sans uppercase">
-                                  {(exam.academicLevel || selectedLevel).toUpperCase()} {exam.examYear || year}
-                                </span>
-                                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md border ${exam.subjectStream === 'science'
-                                    ? 'bg-cyan-100 text-cyan-800 border-cyan-200'
-                                    : exam.subjectStream === 'commerce'
-                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                                      : exam.subjectStream === 'humanities'
-                                        ? 'bg-amber-100 text-amber-800 border-amber-200'
-                                        : 'bg-purple-100 text-purple-800 border-purple-200'
-                                  }`}>
-                                  {isEnglishUi
-                                    ? (exam.subjectStream === 'science'
-                                      ? 'Science'
-                                      : exam.subjectStream === 'commerce'
-                                        ? 'Business'
-                                        : exam.subjectStream === 'humanities'
-                                          ? 'Humanities'
-                                          : 'Compulsory')
-                                    : (exam.subjectStream === 'science'
-                                      ? 'বিজ্ঞান'
-                                      : exam.subjectStream === 'commerce'
-                                        ? 'ব্যবসায় শিক্ষা'
-                                        : exam.subjectStream === 'humanities'
-                                          ? 'মানবিক'
-                                          : 'আবশ্যিক')}
-                                </span>
-                              </div>
-
-                              <div className="text-xs text-blue-700 font-bold mb-1 flex items-center gap-1">
-                                <span>
-                                  {version === 'british'
-                                    ? `🇬🇧 ${exam.boardName || 'Cambridge CAIE'}`
-                                    : version === 'ib'
-                                      ? `🌐 ${exam.boardName || 'International Baccalaureate'}`
-                                      : `🏛️ ${exam.boardName || (isEnglishUi ? 'Dhaka Board' : 'ঢাকা বোর্ড')}`}
-                                </span>
-                              </div>
-
-                              <h4 className="text-base font-bold text-slate-900 group-hover:text-blue-600 transition-colors line-clamp-2 mb-3">
-                                {exam.title}
-                              </h4>
-
-                              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 mb-4">
-                                <span className="inline-flex items-center gap-1 font-medium bg-white px-2 py-1 rounded-md border border-slate-200">
-                                  <Clock className="w-3.5 h-3.5 text-blue-600" />
-                                  {exam.durationMinutes} {isEnglishUi ? 'mins' : 'মিনিট'}
-                                </span>
-                                <span className="inline-flex items-center gap-1 font-medium bg-white px-2 py-1 rounded-md border border-slate-200">
-                                  <BookOpen className="w-3.5 h-3.5 text-emerald-600" />
-                                  {exam.totalMarks} {isEnglishUi ? 'MCQs' : 'টি MCQ'}
-                                </span>
-                              </div>
-                            </div>
-
-                            <Link to={`/subjects/${exam.subjectId}`}>
-                              <Button className="w-full h-10 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-1.5 shadow-xs cursor-pointer">
-                                {version === 'ib'
-                                  ? 'Start Assessment'
-                                  : isEnglishUi
-                                    ? 'Start Exam Paper'
-                                    : 'পরীক্ষা শুরু করো'} <ArrowRight className="w-3.5 h-3.5" />
-                              </Button>
-                            </Link>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Show More / Show Less Button */}
-                      {examsInYear.length > 4 && (
-                        <div className="flex justify-center pt-2">
-                          <button
-                            type="button"
-                            onClick={() => toggleYearExpanded(year)}
-                            className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl border border-blue-200 bg-blue-50/80 hover:bg-blue-100 text-blue-700 hover:text-blue-800 font-bold text-xs transition-all cursor-pointer shadow-xs active:scale-95"
-                          >
-                            {isExpanded ? (
-                              <>
-                                <span>{isEnglishUi ? 'Show Less (First 4 only)' : 'সংক্ষেপ করুন (প্রথম ৪টি দেখান)'}</span>
-                                <ChevronUp className="w-4 h-4 text-blue-600" />
-                              </>
-                            ) : (
-                              <>
-                                <span>
-                                  {isEnglishUi
-                                    ? `Show More (${examsInYear.length - 4} questions remaining)`
-                                    : `আরও দেখুন (${examsInYear.length - 4}টি প্রশ্ন বাকি)`}
-                                </span>
-                                <ChevronDown className="w-4 h-4 text-blue-600" />
-                              </>
-                            )}
-                          </button>
-                        </div>
+                      )}
+                      {isOngoing && (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-rose-50 text-rose-800 text-xs font-bold border border-rose-200">
+                          <Zap className="w-3 h-3 text-rose-600 animate-bounce" />
+                          {isEnglishUi ? 'In Progress' : 'চলমান'}
+                        </span>
                       )}
                     </div>
-                  );
-                })}
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center relative z-10 w-full sm:w-auto justify-end">
+                  {act?.attemptId && isCompleted && (
+                    <Link to={`/exam/${act.attemptId}/result`}>
+                      <Button
+                        variant="outline"
+                        className="h-11 px-4 rounded-xl border-emerald-200 bg-white hover:bg-emerald-50 text-emerald-900 font-bold text-xs gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <Trophy className="w-3.5 h-3.5 text-amber-500" />
+                        <span>{isEnglishUi ? 'View Result' : 'ফলাফল দেখুন'}</span>
+                      </Button>
+                    </Link>
+                  )}
+
+                  <Link to={targetLink}>
+                    <button
+                      type="button"
+                      className="h-11 px-6 rounded-xl bg-gradient-to-r from-[#006837] via-[#047857] to-[#059669] hover:from-[#005a30] hover:to-[#047857] text-white font-black text-xs sm:text-sm shadow-md shadow-emerald-700/25 hover:shadow-lg hover:shadow-emerald-700/35 flex items-center gap-2 cursor-pointer transition-all duration-300 group/btn"
+                    >
+                      <span>
+                        {isOngoing
+                          ? (isEnglishUi ? 'Resume Exam' : 'চালিয়ে যাও')
+                          : isCompleted
+                          ? (isEnglishUi ? 'Practice Again' : 'আবার টেস্ট দাও')
+                          : (isEnglishUi ? 'Start Practice' : 'টেস্ট শুরু করো')}
+                      </span>
+                      <ArrowRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
+                    </button>
+                  </Link>
+                </div>
+              </div>
             </div>
-          )}
-        </section>
+          );
+        })()}
+        {/* Gateway Banner Card to Dedicated Board Questions Page */}
+        <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 text-white shadow-md flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-blue-900/60">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-blue-500/20 border border-blue-400/30 text-blue-300 flex items-center justify-center shrink-0 shadow-inner">
+              <GraduationCap className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-500/30 border border-blue-400/30 text-blue-200 text-[11px] font-bold mb-1">
+                <Sparkles className="w-3 h-3 text-amber-300" />
+                {version === 'british'
+                  ? 'Official CAIE & Edexcel Archive (2020 - 2025)'
+                  : version === 'ib'
+                    ? 'Official IB Assessment Papers (2021 - 2025)'
+                    : 'বিগত বছরের বোর্ড প্রশ্ন ব্যাংক (২০১৬ - ২০২৫)'}
+              </div>
+              <h3 className="text-base sm:text-lg font-bold text-white">
+                {version === 'british'
+                  ? 'Cambridge & Edexcel Past Question Papers'
+                  : version === 'ib'
+                    ? 'IB DP & MYP Past Assessment Papers'
+                    : 'এইচএসসি ও এসএসসি বিগত বছরের বোর্ড প্রশ্নাবলি'}
+              </h3>
+              <p className="text-slate-300 text-xs sm:text-sm">
+                {isEnglishUi
+                  ? 'Practice official past questions with real timers, verified marking schemes and instant performance analysis.'
+                  : 'সকল শিক্ষা বোর্ডের বিগত বছরের প্রশ্নপত্র সময় ধরে পরীক্ষা দাও ও ব্যাখ্যাসহ নির্ভুল উত্তর জেনে নাও।'}
+              </p>
+            </div>
+          </div>
+          <Link to="/board-questions" className="shrink-0 w-full sm:w-auto">
+            <Button className="w-full sm:w-auto h-11 px-5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm gap-2 shadow-sm cursor-pointer">
+              <span>{isEnglishUi ? 'Browse Past Papers' : 'বোর্ড প্রশ্নাবলি দেখুন'}</span>
+              <ArrowRight className="w-4 h-4" />
+            </Button>
+          </Link>
+        </div>
 
         {/* Section: Subjects Grid */}
         <div className="space-y-8">

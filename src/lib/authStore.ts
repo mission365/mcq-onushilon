@@ -11,6 +11,11 @@ export interface AuthUser {
   curriculumVersion?: CurriculumVersion | null;
   academicLevel?: AcademicLevel | null;
   stream?: 'science' | 'commerce' | 'humanities' | 'common' | null;
+  phone?: string | null;
+  institution?: string | null;
+  isSubscribed?: boolean;
+  subscriptionStatus?: string;
+  subscriptionCurriculum?: string;
 }
 
 interface AuthState {
@@ -24,6 +29,7 @@ interface AuthState {
   setCurriculumVersion: (version: CurriculumVersion) => void;
   setAcademicLevel: (level: AcademicLevel) => void;
   setStream: (stream: 'science' | 'commerce' | 'humanities') => void;
+  setSubscription: (isSubscribed: boolean, status: string) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -70,6 +76,13 @@ export const useAuthStore = create<AuthState>()(
       setStream: (stream) =>
         set((state) => ({
           user: state.user ? { ...state.user, stream } : null,
+        })),
+
+      setSubscription: (isSubscribed, status) =>
+        set((state) => ({
+          user: state.user
+            ? { ...state.user, isSubscribed, subscriptionStatus: status }
+            : null,
         })),
     }),
     {

@@ -142,7 +142,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     }
 
     const result = await pool.query(
-      'SELECT id, email, password_hash, full_name, role, is_verified, curriculum_version, academic_level, stream FROM users WHERE email = $1',
+      'SELECT id, email, password_hash, full_name, role, is_verified, curriculum_version, academic_level, stream, is_subscribed, subscription_status FROM users WHERE email = $1',
       [email]
     );
 
@@ -179,6 +179,8 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       curriculumVersion: row.curriculum_version as 'bangla' | 'english' | null,
       academicLevel: (row.academic_level || 'hsc') as 'hsc' | 'ssc',
       stream: (row.stream || 'science') as 'science' | 'commerce' | 'humanities' | 'common',
+      isSubscribed: Boolean(row.is_subscribed) || row.role === 'admin',
+      subscriptionStatus: row.subscription_status || 'free',
     };
 
     const token = generateToken(user);
@@ -306,6 +308,20 @@ app.put('/api/user/curriculum-version', requireAuth, async (req: AuthenticatedRe
       return res.status(400).json({ message: 'Version must be one of: bangla, english, british, ib.' });
     }
 
+    // If student already has curriculum set and is not an admin, lock changes permanently
+    if (req.user!.role !== 'admin') {
+      const existingUser = await pool.query(
+        'SELECT curriculum_version FROM users WHERE id = $1',
+        [req.user!.id]
+      );
+      if (existingUser.rows[0]?.curriculum_version) {
+        return res.status(403).json({
+          message: 'আপনার কারিকুলাম ও পরীক্ষার স্তর একবার নির্ধারণের পর স্থায়ীভাবে সংরক্ষিত। শুধুমাত্র অ্যাডমিন এটি পরিবর্তন করতে পারবেন।',
+          locked: true,
+        });
+      }
+    }
+
     const result = await pool.query(
       `UPDATE users
        SET curriculum_version = COALESCE($1, curriculum_version),
@@ -325,7 +341,9 @@ app.put('/api/user/curriculum-version', requireAuth, async (req: AuthenticatedRe
       fullName: result.rows[0].full_name,
       role: result.rows[0].role as 'student' | 'admin',
       isVerified: result.rows[0].isVerified,
-      curriculumVersion: result.rows[0].curriculumVersion as 'bangla' | 'english',
+      curriculumVersion: result.rows[0].curriculumVersion,
+      academicLevel: result.rows[0].academicLevel,
+      stream: result.rows[0].stream,
     };
 
     const token = generateToken(user);
@@ -333,7 +351,7 @@ app.put('/api/user/curriculum-version', requireAuth, async (req: AuthenticatedRe
       success: true,
       user,
       token,
-      message: version === 'bangla' ? 'বাংলা ভার্সন নির্বাচিত হয়েছে।' : 'English Version selected.',
+      message: version === 'bangla' ? 'বাংলা ভার্সন সফলভাবে সংরক্ষিত হয়েছে।' : 'Curriculum & Stream successfully saved.',
     });
   } catch (error) {
     console.error('Curriculum version update error:', error);
@@ -403,7 +421,7 @@ app.post('/api/auth/google', async (req: Request, res: Response) => {
 app.get('/api/auth/me', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const result = await pool.query(
-      'SELECT id, email, full_name, role, is_verified, curriculum_version, academic_level, stream, created_at FROM users WHERE id = $1',
+      'SELECT id, email, full_name, role, is_verified, curriculum_version, academic_level, stream, is_subscribed, subscription_status, created_at FROM users WHERE id = $1',
       [req.user!.id]
     );
     if (result.rowCount === 0) {
@@ -419,6 +437,8 @@ app.get('/api/auth/me', requireAuth, async (req: AuthenticatedRequest, res: Resp
       curriculumVersion: row.curriculum_version,
       academicLevel: row.academic_level || 'hsc',
       stream: row.stream || 'science',
+      isSubscribed: Boolean(row.is_subscribed) || row.role === 'admin',
+      subscriptionStatus: row.subscription_status || 'free',
       createdAt: row.created_at,
     });
   } catch (error) {
@@ -714,11 +734,45 @@ app.delete('/api/subjects/:id', requireAdmin, async (req: Request, res: Response
 app.get('/api/payment-settings', async (_req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      'SELECT id, bkash_number as "bkashNumber", bkash_account_name as "bkashAccountName", payment_instructions as "paymentInstructions" FROM payment_settings WHERE id = $1',
+      `SELECT id,
+              bkash_number as "bkashNumber",
+              bkash_account_name as "bkashAccountName",
+              nagad_number as "nagadNumber",
+              nagad_account_name as "nagadAccountName",
+              price_bangla as "priceBangla",
+              price_english as "priceEnglish",
+              price_british as "priceBritish",
+              price_ib as "priceIb",
+              original_price_bangla as "originalPriceBangla",
+              original_price_english as "originalPriceEnglish",
+              original_price_british as "originalPriceBritish",
+              original_price_ib as "originalPriceIb",
+              discount_title as "discountTitle",
+              discount_expires_at as "discountExpiresAt",
+              discount_active as "discountActive",
+              payment_instructions as "paymentInstructions"
+       FROM payment_settings WHERE id = $1`,
       ['default']
     );
     if (result.rowCount === 0) {
-      return res.json({ bkashNumber: '', bkashAccountName: '', paymentInstructions: '' });
+      return res.json({
+        bkashNumber: '01700000000',
+        bkashAccountName: 'MCQ Onushilon (Personal)',
+        nagadNumber: '01800000000',
+        nagadAccountName: 'MCQ Onushilon (Personal)',
+        priceBangla: 499,
+        priceEnglish: 699,
+        priceBritish: 1200,
+        priceIb: 1500,
+        originalPriceBangla: 999,
+        originalPriceEnglish: 1299,
+        originalPriceBritish: 2000,
+        originalPriceIb: 2500,
+        discountTitle: 'সীমিত সময়ের মেগা অফার!',
+        discountExpiresAt: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+        discountActive: true,
+        paymentInstructions: '',
+      });
     }
     res.json(result.rows[0]);
   } catch (error) {
@@ -728,17 +782,90 @@ app.get('/api/payment-settings', async (_req: Request, res: Response) => {
 
 app.put('/api/payment-settings', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { bkashNumber, bkashAccountName, paymentInstructions } = req.body;
+    const {
+      bkashNumber,
+      bkashAccountName,
+      nagadNumber,
+      nagadAccountName,
+      priceBangla,
+      priceEnglish,
+      priceBritish,
+      priceIb,
+      originalPriceBangla,
+      originalPriceEnglish,
+      originalPriceBritish,
+      originalPriceIb,
+      discountTitle,
+      discountExpiresAt,
+      discountActive,
+      paymentInstructions,
+    } = req.body;
+
     const result = await pool.query(
-      `INSERT INTO payment_settings (id, bkash_number, bkash_account_name, payment_instructions, updated_at)
-       VALUES ('default', $1, $2, $3, NOW())
+      `INSERT INTO payment_settings
+         (id, bkash_number, bkash_account_name, nagad_number, nagad_account_name,
+          price_bangla, price_english, price_british, price_ib,
+          original_price_bangla, original_price_english, original_price_british, original_price_ib,
+          discount_title, discount_expires_at, discount_active,
+          payment_instructions, updated_at)
+       VALUES ('default', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
        ON CONFLICT (id) DO UPDATE
-       SET bkash_number = $1, bkash_account_name = $2, payment_instructions = $3, updated_at = NOW()
-       RETURNING id, bkash_number as "bkashNumber", bkash_account_name as "bkashAccountName", payment_instructions as "paymentInstructions"`,
-      [bkashNumber?.trim() || '', bkashAccountName?.trim() || '', paymentInstructions?.trim() || '']
+       SET bkash_number = $1,
+           bkash_account_name = $2,
+           nagad_number = $3,
+           nagad_account_name = $4,
+           price_bangla = $5,
+           price_english = $6,
+           price_british = $7,
+           price_ib = $8,
+           original_price_bangla = $9,
+           original_price_english = $10,
+           original_price_british = $11,
+           original_price_ib = $12,
+           discount_title = $13,
+           discount_expires_at = $14,
+           discount_active = $15,
+           payment_instructions = $16,
+           updated_at = NOW()
+       RETURNING id,
+                 bkash_number as "bkashNumber",
+                 bkash_account_name as "bkashAccountName",
+                 nagad_number as "nagadNumber",
+                 nagad_account_name as "nagadAccountName",
+                 price_bangla as "priceBangla",
+                 price_english as "priceEnglish",
+                 price_british as "priceBritish",
+                 price_ib as "priceIb",
+                 original_price_bangla as "originalPriceBangla",
+                 original_price_english as "originalPriceEnglish",
+                 original_price_british as "originalPriceBritish",
+                 original_price_ib as "originalPriceIb",
+                 discount_title as "discountTitle",
+                 discount_expires_at as "discountExpiresAt",
+                 discount_active as "discountActive",
+                 payment_instructions as "paymentInstructions"`,
+      [
+        bkashNumber?.trim() || '01700000000',
+        bkashAccountName?.trim() || 'MCQ Onushilon (Personal)',
+        nagadNumber?.trim() || '01800000000',
+        nagadAccountName?.trim() || 'MCQ Onushilon (Personal)',
+        Number(priceBangla) || 499,
+        Number(priceEnglish) || 699,
+        Number(priceBritish) || 1200,
+        Number(priceIb) || 1500,
+        Number(originalPriceBangla) || 999,
+        Number(originalPriceEnglish) || 1299,
+        Number(originalPriceBritish) || 2000,
+        Number(originalPriceIb) || 2500,
+        discountTitle?.trim() || 'সীমিত সময়ের মেগা অফার!',
+        discountExpiresAt ? new Date(discountExpiresAt) : null,
+        discountActive !== undefined ? Boolean(discountActive) : true,
+        paymentInstructions?.trim() || '',
+      ]
     );
     res.json(result.rows[0]);
   } catch (error) {
+    console.error('Error saving payment settings:', error);
     res.status(500).json({ message: 'Failed to save payment settings.' });
   }
 });
@@ -747,15 +874,37 @@ app.put('/api/payment-settings', requireAdmin, async (req: Request, res: Respons
 // 5. EXAMS ROUTES
 // ==========================================
 
-// Get exams (optionally filtered by subjectId, academicLevel, examType)
+// Get chapters for a subject with exam count
+app.get('/api/subjects/:subjectId/chapters', async (req: Request, res: Response) => {
+  try {
+    const { subjectId } = req.params;
+    const result = await pool.query(
+      `SELECT c.id, c.subject_id as "subjectId", c.chapter_number as "chapterNumber",
+              c.title, c.title_bn as "titleBn", c.description, c.serial_number as "serialNumber",
+              COUNT(e.id)::int as "examCount"
+       FROM chapters c
+       LEFT JOIN exams e ON e.chapter_id = c.id AND e.is_published = TRUE
+       WHERE c.subject_id = $1
+       GROUP BY c.id
+       ORDER BY c.chapter_number ASC, c.serial_number ASC`,
+      [subjectId]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Fetch chapters error:', error);
+    res.status(500).json({ message: 'Failed to fetch chapters.' });
+  }
+});
+
+// Get exams (optionally filtered by subjectId, chapterId, academicLevel, examType)
 app.get('/api/exams', optionalAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { subjectId, academicLevel, examType, stream } = req.query;
+    const { subjectId, chapterId, academicLevel, examType, stream } = req.query;
     const version = (req.query.version || req.query.curriculumVersion) as string | undefined;
     const isAdminUser = req.user?.role === 'admin';
 
     let queryText = `
-      SELECT e.id, e.subject_id as "subjectId", e.title, e.serial_number as "serialNumber",
+      SELECT e.id, e.subject_id as "subjectId", e.chapter_id as "chapterId", e.title, e.serial_number as "serialNumber",
              e.duration_minutes as "durationMinutes", e.total_marks as "totalMarks",
              e.negative_mark as "negativeMark", e.instructions, e.is_published as "isPublished",
              e.curriculum_version as "curriculumVersion", e.academic_level as "academicLevel",
@@ -771,6 +920,11 @@ app.get('/api/exams', optionalAuth, async (req: AuthenticatedRequest, res: Respo
     if (subjectId) {
       params.push(subjectId);
       queryText += ` AND e.subject_id = $${params.length}`;
+    }
+
+    if (chapterId) {
+      params.push(chapterId);
+      queryText += ` AND e.chapter_id = $${params.length}`;
     }
 
     if (academicLevel) {
@@ -815,7 +969,7 @@ app.get('/api/exams', optionalAuth, async (req: AuthenticatedRequest, res: Respo
 app.get('/api/exams/:id', async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
-      `SELECT e.id, e.subject_id as "subjectId", e.title, e.serial_number as "serialNumber",
+      `SELECT e.id, e.subject_id as "subjectId", e.chapter_id as "chapterId", e.title, e.serial_number as "serialNumber",
               e.duration_minutes as "durationMinutes", e.total_marks as "totalMarks",
               e.negative_mark as "negativeMark", e.instructions, e.is_published as "isPublished",
               e.curriculum_version as "curriculumVersion", e.academic_level as "academicLevel",
@@ -913,7 +1067,7 @@ app.delete('/api/exams/:id', requireAdmin, async (req: Request, res: Response) =
 // 6. QUESTIONS ROUTES
 // ==========================================
 
-// Get questions for an exam (checks free rule & subject access)
+// Get questions for an exam (checks total 3 free tests limit & active subscription)
 app.get('/api/exams/:examId/questions', optionalAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { examId } = req.params;
@@ -921,26 +1075,43 @@ app.get('/api/exams/:examId/questions', optionalAuth, async (req: AuthenticatedR
     if (examRes.rowCount === 0) return res.status(404).json({ message: 'Exam not found.' });
 
     const exam = examRes.rows[0];
-    const isFree = Number(exam.serial_number) <= 3;
     const isAdminUser = req.user?.role === 'admin';
 
-    let hasAccess = isFree || isAdminUser;
+    let hasAccess = Boolean(isAdminUser);
 
     if (!hasAccess && req.user) {
-      const accessRes = await pool.query(
-        'SELECT id FROM subject_access WHERE user_id = $1 AND subject_id = $2 AND status = $3',
-        [req.user.id, exam.subject_id, 'active']
-      );
-      if (accessRes.rowCount && accessRes.rowCount > 0) {
+      // 1. Check if user has active approved subscription
+      const uRes = await pool.query('SELECT is_subscribed FROM users WHERE id = $1', [req.user.id]);
+      if (uRes.rows[0]?.is_subscribed) {
         hasAccess = true;
+      } else {
+        // 2. Check if student already attempted this exam previously (retaking/reviewing does not consume extra slot)
+        const existingAttempt = await pool.query(
+          'SELECT id FROM attempts WHERE student_id = $1 AND exam_id = $2 LIMIT 1',
+          [req.user.id, examId]
+        );
+        if (existingAttempt.rowCount && existingAttempt.rowCount > 0) {
+          hasAccess = true;
+        } else {
+          // 3. Count distinct exams attempted across all subjects and board questions
+          const attemptsCountRes = await pool.query(
+            'SELECT COUNT(DISTINCT exam_id) as count FROM attempts WHERE student_id = $1',
+            [req.user.id]
+          );
+          const distinctCount = parseInt(attemptsCountRes.rows[0]?.count || '0', 10);
+          if (distinctCount < 3) {
+            hasAccess = true;
+          }
+        }
       }
     }
 
     if (!hasAccess) {
       return res.status(403).json({
-        message: 'This model test is locked. Please unlock the subject to access the questions.',
+        message: 'আপনি আপনার ৩টি ফ্রি টেস্টের সুযোগ ব্যবহার করে ফেলেছেন। পরবর্তী সকল মডেল টেস্ট ও বোর্ড প্রশ্ন আনলক করতে সাবস্ক্রিপশন গ্রহণ করুন।',
+        requiresSubscription: true,
         isLocked: true,
-        subjectId: exam.subject_id,
+        freeLimit: 3,
       });
     }
 
@@ -1260,6 +1431,470 @@ app.get('/api/exams/:examId/submissions', requireAuth, async (req: Authenticated
   }
 });
 
+// Real-time student statistics (completed exams, avg score %, and daily study streak)
+app.get('/api/user/stats', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+
+    // 1. Completed exams count and total attempts
+    const attemptsSummaryRes = await pool.query(
+      `SELECT 
+         COUNT(DISTINCT exam_id)::int as "completedExams",
+         COUNT(id)::int as "totalAttempts",
+         COALESCE(SUM(total_attempted), 0)::int as "totalQuestionsAttempted",
+         COALESCE(SUM(correct_count), 0)::int as "totalCorrect",
+         COALESCE(SUM(wrong_count), 0)::int as "totalWrong"
+       FROM attempts
+       WHERE student_id = $1 AND status = 'completed'`,
+      [studentId]
+    );
+    const summary = attemptsSummaryRes.rows[0] || {
+      completedExams: 0,
+      totalAttempts: 0,
+      totalQuestionsAttempted: 0,
+      totalCorrect: 0,
+      totalWrong: 0,
+    };
+
+    // 2. Accurate average percentage score calculation across completed exams
+    const avgScoreRes = await pool.query(
+      `SELECT 
+         COALESCE(
+           AVG(
+             CASE 
+               WHEN COALESCE(e.total_marks, 0) > 0 
+               THEN LEAST(100.0, GREATEST(0.0, (a.score / e.total_marks) * 100.0))
+               WHEN a.total_attempted > 0 
+               THEN LEAST(100.0, GREATEST(0.0, (a.score / a.total_attempted) * 100.0))
+               ELSE 0.0
+             END
+           ), 
+           0.0
+         ) as "avgPercentage"
+       FROM attempts a
+       LEFT JOIN exams e ON a.exam_id = e.id
+       WHERE a.student_id = $1 AND a.status = 'completed'`,
+      [studentId]
+    );
+    const avgScore = Math.round(Number(avgScoreRes.rows[0]?.avgPercentage || 0));
+
+    // 3. Consecutive Daily Study Streak Calculation in Bangladesh Time (UTC+6)
+    const datesRes = await pool.query(
+      `SELECT DISTINCT TO_CHAR(submitted_at AT TIME ZONE 'Asia/Dhaka', 'YYYY-MM-DD') as "examDate"
+       FROM attempts
+       WHERE student_id = $1 AND status = 'completed'
+       ORDER BY "examDate" DESC`,
+      [studentId]
+    );
+
+    const activeDates: string[] = datesRes.rows.map((r: any) => r.examDate);
+
+    // Get current date and yesterday in Dhaka time
+    const nowInDhaka = new Date(Date.now() + 6 * 3600 * 1000);
+    const todayStr = nowInDhaka.toISOString().slice(0, 10);
+    const yesterdayInDhaka = new Date(Date.now() + 6 * 3600 * 1000 - 86400 * 1000);
+    const yesterdayStr = yesterdayInDhaka.toISOString().slice(0, 10);
+
+    let streakDays = 0;
+    if (activeDates.length > 0) {
+      let currentCheckDate: Date;
+
+      if (activeDates[0] === todayStr) {
+        streakDays = 1;
+        currentCheckDate = new Date(nowInDhaka);
+        currentCheckDate.setUTCDate(currentCheckDate.getUTCDate() - 1);
+      } else if (activeDates[0] === yesterdayStr) {
+        streakDays = 1;
+        currentCheckDate = new Date(yesterdayInDhaka);
+        currentCheckDate.setUTCDate(currentCheckDate.getUTCDate() - 1);
+      } else {
+        streakDays = 0;
+        currentCheckDate = new Date(nowInDhaka);
+      }
+
+      if (streakDays > 0) {
+        const dateSet = new Set(activeDates);
+        for (let i = 1; i < 365; i++) {
+          const checkStr = currentCheckDate.toISOString().slice(0, 10);
+          if (dateSet.has(checkStr)) {
+            streakDays++;
+            currentCheckDate.setUTCDate(currentCheckDate.getUTCDate() - 1);
+          } else {
+            break;
+          }
+        }
+      }
+    }
+
+    res.json({
+      completedExams: summary.completedExams,
+      totalAttempts: summary.totalAttempts,
+      avgScore,
+      streakDays,
+      totalQuestionsAttempted: summary.totalQuestionsAttempted,
+      totalCorrect: summary.totalCorrect,
+      totalWrong: summary.totalWrong
+    });
+  } catch (error) {
+    console.error('Fetch user stats error:', error);
+    res.status(500).json({ message: 'Failed to fetch user stats.' });
+  }
+});
+
+// Get student profile, academic configuration, and recent exam attempts
+app.get('/api/user/profile', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+
+    // 1. Fetch user personal & academic info
+    const userRes = await pool.query(
+      `SELECT id, email, full_name as "fullName", role, phone, institution,
+              is_verified as "isVerified", curriculum_version as "curriculumVersion",
+              academic_level as "academicLevel", stream,
+              is_subscribed as "isSubscribed", subscription_status as "subscriptionStatus",
+              subscription_curriculum as "subscriptionCurriculum",
+              created_at as "createdAt"
+       FROM users
+       WHERE id = $1`,
+      [userId]
+    );
+    if (userRes.rowCount === 0) return res.status(404).json({ message: 'User not found.' });
+
+    const profile = userRes.rows[0];
+
+    // 2. Fetch recent 10 exam attempts with exam and subject titles
+    const recentAttemptsRes = await pool.query(
+      `SELECT a.id, a.exam_id as "examId", a.score, a.total_attempted as "totalAttempted",
+              a.correct_count as "correctCount", a.wrong_count as "wrongCount",
+              a.status, a.submitted_at as "submittedAt",
+              e.title as "examTitle", e.total_marks as "totalMarks", e.exam_type as "examType",
+              s.name as "subjectName", s.name_bn as "subjectNameBn"
+       FROM attempts a
+       JOIN exams e ON a.exam_id = e.id
+       JOIN subjects s ON e.subject_id = s.id
+       WHERE a.student_id = $1 AND a.status = 'completed'
+       ORDER BY a.submitted_at DESC
+       LIMIT 10`,
+      [userId]
+    );
+
+    res.json({
+      user: profile,
+      recentAttempts: recentAttemptsRes.rows
+    });
+  } catch (error) {
+    console.error('Fetch profile error:', error);
+    res.status(500).json({ message: 'Failed to fetch user profile.' });
+  }
+});
+
+// Student's last activity for "Continue where you left off"
+app.get('/api/user/recent-activity', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const academicLevel = typeof req.query.academicLevel === 'string' ? req.query.academicLevel : null;
+    const curriculumVersion = typeof req.query.curriculumVersion === 'string' ? req.query.curriculumVersion : null;
+
+    // 1. Search for user's latest ongoing or submitted attempt
+    let attemptQuery = `
+      SELECT a.id as "attemptId", a.exam_id as "examId", a.score, a.total_attempted as "totalAttempted",
+             a.correct_count as "correctCount", a.wrong_count as "wrongCount", a.status,
+             a.started_at as "startedAt", a.submitted_at as "submittedAt",
+             e.title as "examTitle", e.duration_minutes as "durationMinutes", e.total_marks as "totalMarks",
+             COALESCE(e.academic_level, s.academic_level, 'hsc') as "academicLevel",
+             COALESCE(e.curriculum_version, s.curriculum_version, 'bangla') as "curriculumVersion",
+             s.id as "subjectId", s.name as "subjectName", s.name_bn as "subjectNameBn",
+             COALESCE((SELECT COUNT(*) FROM questions q WHERE q.exam_id = e.id), 0)::int as "questionCount"
+      FROM attempts a
+      JOIN exams e ON a.exam_id = e.id
+      JOIN subjects s ON e.subject_id = s.id
+      WHERE a.student_id = $1
+    `;
+    const params: any[] = [studentId];
+    if (academicLevel) {
+      params.push(academicLevel);
+      attemptQuery += ` AND (e.academic_level = $${params.length} OR s.academic_level = $${params.length})`;
+    }
+    attemptQuery += ` ORDER BY COALESCE(a.submitted_at, a.started_at) DESC LIMIT 1`;
+
+    const attemptRes = await pool.query(attemptQuery, params);
+
+    if (attemptRes.rowCount && attemptRes.rowCount > 0) {
+      return res.json({
+        hasActivity: true,
+        type: 'attempt',
+        activity: attemptRes.rows[0]
+      });
+    }
+
+    // 2. If student has no attempts, find first published exam in this level/curriculum
+    let fallbackQuery = `
+      SELECT e.id as "examId", e.title as "examTitle", e.duration_minutes as "durationMinutes",
+             e.total_marks as "totalMarks",
+             COALESCE(e.academic_level, s.academic_level, 'hsc') as "academicLevel",
+             COALESCE(e.curriculum_version, s.curriculum_version, 'bangla') as "curriculumVersion",
+             s.id as "subjectId", s.name as "subjectName", s.name_bn as "subjectNameBn",
+             COALESCE((SELECT COUNT(*) FROM questions q WHERE q.exam_id = e.id), 0)::int as "questionCount"
+      FROM exams e
+      JOIN subjects s ON e.subject_id = s.id
+      WHERE e.is_published = TRUE
+    `;
+    const fallbackParams: any[] = [];
+    if (academicLevel) {
+      fallbackParams.push(academicLevel);
+      fallbackQuery += ` AND (e.academic_level = $${fallbackParams.length} OR s.academic_level = $${fallbackParams.length})`;
+    }
+    if (curriculumVersion) {
+      fallbackParams.push(curriculumVersion);
+      fallbackQuery += ` AND (e.curriculum_version = $${fallbackParams.length} OR s.curriculum_version = $${fallbackParams.length})`;
+    }
+    fallbackQuery += ` ORDER BY s.created_at ASC, e.serial_number ASC LIMIT 1`;
+
+    const fallbackRes = await pool.query(fallbackQuery, fallbackParams);
+
+    if (fallbackRes.rowCount && fallbackRes.rowCount > 0) {
+      return res.json({
+        hasActivity: false,
+        type: 'recommended',
+        activity: fallbackRes.rows[0]
+      });
+    }
+
+    // 3. Fallback to any published exam
+    const anyExamRes = await pool.query(`
+      SELECT e.id as "examId", e.title as "examTitle", e.duration_minutes as "durationMinutes",
+             e.total_marks as "totalMarks",
+             COALESCE(e.academic_level, s.academic_level, 'hsc') as "academicLevel",
+             COALESCE(e.curriculum_version, s.curriculum_version, 'bangla') as "curriculumVersion",
+             s.id as "subjectId", s.name as "subjectName", s.name_bn as "subjectNameBn",
+             COALESCE((SELECT COUNT(*) FROM questions q WHERE q.exam_id = e.id), 0)::int as "questionCount"
+      FROM exams e
+      JOIN subjects s ON e.subject_id = s.id
+      WHERE e.is_published = TRUE
+      LIMIT 1
+    `);
+
+    if (anyExamRes.rowCount && anyExamRes.rowCount > 0) {
+      return res.json({
+        hasActivity: false,
+        type: 'recommended',
+        activity: anyExamRes.rows[0]
+      });
+    }
+
+    res.json({ hasActivity: false, type: null, activity: null });
+  } catch (error) {
+    console.error('Fetch recent activity error:', error);
+    res.status(500).json({ message: 'Failed to fetch recent activity.' });
+  }
+});
+
+// Update student personal information (Name, Phone, Institution)
+app.put('/api/user/profile', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { fullName, phone, institution } = req.body;
+
+    if (!fullName || typeof fullName !== 'string' || !fullName.trim()) {
+      return res.status(400).json({ message: 'সম্পূর্ণ নাম আবশ্যক।' });
+    }
+
+    const updateRes = await pool.query(
+      `UPDATE users
+       SET full_name = $1,
+           phone = $2,
+           institution = $3,
+           updated_at = NOW()
+       WHERE id = $4
+       RETURNING id, email, full_name as "fullName", role, phone, institution,
+                 is_verified as "isVerified", curriculum_version as "curriculumVersion",
+                 academic_level as "academicLevel", stream, created_at as "createdAt"`,
+      [fullName.trim(), phone ? phone.trim() : null, institution ? institution.trim() : null, userId]
+    );
+
+    const updatedUser = updateRes.rows[0];
+    const newToken = generateToken({
+      id: updatedUser.id,
+      email: updatedUser.email,
+      fullName: updatedUser.fullName,
+      role: updatedUser.role,
+      isVerified: updatedUser.isVerified,
+      curriculumVersion: updatedUser.curriculumVersion,
+      academicLevel: updatedUser.academicLevel,
+      stream: updatedUser.stream
+    });
+
+    res.json({
+      success: true,
+      user: updatedUser,
+      token: newToken,
+      message: 'প্রোফাইল তথ্য সফলভাবে সংরক্ষণ করা হয়েছে।'
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ message: 'Failed to update profile.' });
+  }
+});
+
+// Change student password securely
+app.put('/api/user/change-password', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'বর্তমান ও নতুন উভয় পাসওয়ার্ড প্রদান করুন।' });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: 'নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।' });
+    }
+
+    const userRes = await pool.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+    if (userRes.rowCount === 0) return res.status(404).json({ message: 'User not found.' });
+
+    const validPassword = await comparePassword(currentPassword, userRes.rows[0].password_hash);
+    if (!validPassword) {
+      return res.status(400).json({ message: 'বর্তমান পাসওয়ার্ডটি সঠিক নয়।' });
+    }
+
+    const newHash = await hashPassword(newPassword);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [newHash, userId]);
+
+    res.json({
+      success: true,
+      message: 'পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে।'
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ message: 'Failed to change password.' });
+  }
+});
+
+// Student: Check Subscription Status & 3 Free Tests Limit
+app.get('/api/user/subscription-status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const userRes = await pool.query(
+      `SELECT id, is_subscribed as "isSubscribed",
+              subscription_status as "subscriptionStatus",
+              subscription_curriculum as "subscriptionCurriculum",
+              curriculum_version as "curriculumVersion",
+              role
+       FROM users WHERE id = $1`,
+      [userId]
+    );
+    if (userRes.rowCount === 0) return res.status(404).json({ message: 'User not found.' });
+
+    const u = userRes.rows[0];
+    const isSubscribed = Boolean(u.isSubscribed) || u.role === 'admin';
+
+    // Count distinct exams taken
+    const attemptsRes = await pool.query(
+      'SELECT COUNT(DISTINCT exam_id) as "examsTakenCount", COUNT(*) as "totalAttempts" FROM attempts WHERE student_id = $1',
+      [userId]
+    );
+    const examsTakenCount = parseInt(attemptsRes.rows[0]?.examsTakenCount || '0', 10);
+    const totalAttempts = parseInt(attemptsRes.rows[0]?.totalAttempts || '0', 10);
+
+    const freeLimit = 3;
+    const freeTestsUsed = Math.min(examsTakenCount, freeLimit);
+    const freeTestsRemaining = isSubscribed ? 9999 : Math.max(0, freeLimit - examsTakenCount);
+
+    // Check if there is a pending subscription payment request
+    const pendingPaymentRes = await pool.query(
+      `SELECT id, amount, currency, gateway, sender_number as "senderNumber",
+              transaction_id as "transactionId", status, created_at as "createdAt"
+       FROM manual_payment_requests
+       WHERE user_id = $1 AND status = 'submitted'
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+    const pendingPayment = pendingPaymentRes.rows[0] || null;
+
+    res.json({
+      isSubscribed,
+      subscriptionStatus: u.subscriptionStatus || (isSubscribed ? 'active' : 'free'),
+      subscriptionCurriculum: u.subscriptionCurriculum || u.curriculumVersion || 'bangla',
+      curriculumVersion: u.curriculumVersion || 'bangla',
+      examsTakenCount,
+      totalAttempts,
+      freeLimit,
+      freeTestsUsed,
+      freeTestsRemaining,
+      canTakeExam: isSubscribed || examsTakenCount < freeLimit,
+      pendingPayment,
+    });
+  } catch (err) {
+    console.error('Subscription status error:', err);
+    res.status(500).json({ message: 'Failed to load subscription status.' });
+  }
+});
+
+// Student: Submit Subscription Payment Request (Personal bKash or Nagad)
+app.post('/api/subscription/submit', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const gateway = req.body?.gateway === 'nagad' ? 'nagad' : 'bkash';
+    const senderNumber = typeof req.body?.senderNumber === 'string' ? req.body.senderNumber.trim() : '';
+    const transactionId = typeof req.body?.transactionId === 'string' ? req.body.transactionId.trim().toUpperCase() : '';
+    const curriculumVersion = typeof req.body?.curriculumVersion === 'string' ? req.body.curriculumVersion : (req.user?.curriculumVersion || 'bangla');
+
+    if (!senderNumber || !transactionId) {
+      return res.status(400).json({ message: 'প্রেরক মোবাইল নম্বর ও Transaction ID (TrxID) প্রদান করুন।' });
+    }
+
+    if (transactionId.length < 5) {
+      return res.status(400).json({ message: 'অনুগ্রহ করে সঠিক Transaction ID (TrxID) প্রদান করুন।' });
+    }
+
+    // Check if TrxID already submitted
+    const existingTrx = await pool.query(
+      'SELECT id, status FROM manual_payment_requests WHERE UPPER(transaction_id) = $1',
+      [transactionId]
+    );
+    if (existingTrx.rowCount && existingTrx.rowCount > 0) {
+      return res.status(400).json({ message: 'এই Transaction ID (TrxID) টি ইতিপূর্বে জমা দেওয়া হয়েছে।' });
+    }
+
+    // Load current curriculum prices from payment_settings
+    const settingsRes = await pool.query('SELECT * FROM payment_settings WHERE id = $1', ['default']);
+    const settings = settingsRes.rows[0] || {};
+
+    let amount = 499;
+    if (curriculumVersion === 'english') amount = Number(settings.price_english) || 699;
+    else if (curriculumVersion === 'british') amount = Number(settings.price_british) || 1200;
+    else if (curriculumVersion === 'ib') amount = Number(settings.price_ib) || 1500;
+    else amount = Number(settings.price_bangla) || 499;
+
+    const receiverNumber = gateway === 'nagad' ? (settings.nagad_number || '01800000000') : (settings.bkash_number || '01700000000');
+    const receiverName = gateway === 'nagad' ? (settings.nagad_account_name || 'MCQ Onushilon (Personal)') : (settings.bkash_account_name || 'MCQ Onushilon (Personal)');
+
+    const insertRes = await pool.query(
+      `INSERT INTO manual_payment_requests
+         (user_id, plan_type, curriculum_version, gateway, payment_method, amount, currency, sender_number, sender_bkash_number, receiver_bkash_number, receiver_name, transaction_id, status)
+       VALUES ($1, 'curriculum_subscription', $2, $3, 'manual', $4, 'BDT', $5, $5, $6, $7, $8, 'submitted')
+       RETURNING id, status, amount, transaction_id as "transactionId", created_at as "createdAt"`,
+      [userId, curriculumVersion, gateway, amount, senderNumber, receiverNumber, receiverName, transactionId]
+    );
+
+    // Update user's subscription_status to 'pending'
+    await pool.query(
+      "UPDATE users SET subscription_status = 'pending', subscription_curriculum = $1, updated_at = NOW() WHERE id = $2 AND is_subscribed = FALSE",
+      [curriculumVersion, userId]
+    );
+
+    res.json({
+      success: true,
+      message: 'পেমেন্ট রিকোয়েস্ট সফলভাবে জমা হয়েছে। অ্যাডমিন পর্যালোচনার পর আপনার সাবস্ক্রিপশন চালু হবে।',
+      payment: insertRes.rows[0],
+    });
+  } catch (error) {
+    console.error('Subscription submit error:', error);
+    res.status(500).json({ message: 'পেমেন্ট রিকোয়েস্ট জমা দিতে ব্যর্থ হয়েছে।' });
+  }
+});
+
 // Check if user has unlocked a subject
 app.get('/api/subjects/:subjectId/access', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -1342,9 +1977,15 @@ app.get('/api/admin/manual-payments', requireAdmin, async (_req: Request, res: R
   try {
     const result = await pool.query(
       `SELECT m.id, m.user_id as "userId", u.full_name as "userName", u.email as "userEmail",
+              m.plan_type as "planType", m.curriculum_version as "curriculumVersion",
               m.subject_id as "subjectId", m.subject_name as "subjectName",
-              m.amount, m.currency, m.sender_bkash_number as "senderBkashNumber",
-              m.receiver_bkash_number as "receiverBkashNumber", m.transaction_id as "transactionId",
+              m.gateway, m.payment_method as "paymentMethod",
+              m.amount, m.currency,
+              COALESCE(m.sender_number, m.sender_bkash_number) as "senderNumber",
+              m.sender_bkash_number as "senderBkashNumber",
+              COALESCE(m.receiver_bkash_number, '') as "receiverBkashNumber",
+              m.receiver_name as "receiverName",
+              m.transaction_id as "transactionId",
               m.status, m.created_at as "createdAt", m.reviewed_at as "reviewedAt"
        FROM manual_payment_requests m
        JOIN users u ON u.id = m.user_id
@@ -1356,7 +1997,7 @@ app.get('/api/admin/manual-payments', requireAdmin, async (_req: Request, res: R
   }
 });
 
-// Admin: Approve or Reject manual payment
+// Admin: Approve or Reject manual payment (unlocks subscription or subject)
 app.put('/api/admin/manual-payments/:id/status', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
   const client = await pool.connect();
   try {
@@ -1386,13 +2027,37 @@ app.put('/api/admin/manual-payments/:id/status', requireAdmin, async (req: Authe
     );
 
     if (status === 'approved') {
+      // 1. Activate student's platform-wide subscription
       await client.query(
-        `INSERT INTO subject_access
-         (user_id, subject_id, amount, currency, gateway, payment_method, trx_id, status, unlocked_at)
-         VALUES ($1, $2, $3, $4, 'bkash', 'manual', $5, 'active', NOW())
-         ON CONFLICT (user_id, subject_id) DO UPDATE
-         SET status = 'active', amount = $3, trx_id = $5, unlocked_at = NOW()`,
-        [row.user_id, row.subject_id, row.amount, row.currency, row.transaction_id]
+        `UPDATE users
+         SET is_subscribed = TRUE,
+             subscription_status = 'active',
+             subscription_curriculum = COALESCE($1, curriculum_version, 'bangla'),
+             subscription_activated_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $2`,
+        [row.curriculum_version, row.user_id]
+      );
+
+      // 2. If this payment was tied to a specific subject, also mark subject_access
+      if (row.subject_id) {
+        await client.query(
+          `INSERT INTO subject_access
+           (user_id, subject_id, amount, currency, gateway, payment_method, trx_id, status, unlocked_at)
+           VALUES ($1, $2, $3, $4, $5, 'manual', $6, 'active', NOW())
+           ON CONFLICT (user_id, subject_id) DO UPDATE
+           SET status = 'active', amount = $3, trx_id = $6, unlocked_at = NOW()`,
+          [row.user_id, row.subject_id, row.amount, row.currency, row.gateway || 'bkash', row.transaction_id]
+        );
+      }
+    } else if (status === 'rejected') {
+      // Reset user subscription_status to 'free' if not already subscribed
+      await client.query(
+        `UPDATE users
+         SET subscription_status = 'free',
+             updated_at = NOW()
+         WHERE id = $1 AND is_subscribed = FALSE`,
+        [row.user_id]
       );
     }
 
@@ -1406,6 +2071,7 @@ app.put('/api/admin/manual-payments/:id/status', requireAdmin, async (req: Authe
     client.release();
   }
 });
+
 
 // Admin Dashboard stats
 app.get('/api/admin/stats', requireAdmin, async (_req: Request, res: Response) => {
@@ -1425,6 +2091,130 @@ app.get('/api/admin/stats', requireAdmin, async (_req: Request, res: Response) =
     });
   } catch (error) {
     res.status(500).json({ message: 'Failed to load stats.' });
+  }
+});
+
+// Admin: Search and list users/students
+app.get('/api/admin/users', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const search = typeof req.query.q === 'string' ? req.query.q.trim() : (typeof req.query.query === 'string' ? (req.query.query as string).trim() : '');
+    let queryText = `
+      SELECT id, email, full_name as "fullName", role, is_verified as "isVerified",
+             curriculum_version as "curriculumVersion", academic_level as "academicLevel",
+             stream, is_subscribed as "isSubscribed", subscription_status as "subscriptionStatus",
+             subscription_curriculum as "subscriptionCurriculum", created_at as "createdAt"
+      FROM users
+    `;
+    const params: any[] = [];
+    if (search) {
+      params.push(`%${search}%`);
+      queryText += ` WHERE email ILIKE $1 OR full_name ILIKE $1`;
+    }
+    queryText += ` ORDER BY created_at DESC LIMIT 100`;
+
+    const result = await pool.query(queryText, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Fetch admin users error:', error);
+    res.status(500).json({ message: 'Failed to fetch users.' });
+  }
+});
+
+// Admin: Update student curriculum version, academic level, and stream
+app.put('/api/admin/users/:userId/curriculum', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    const { curriculumVersion, academicLevel, stream } = req.body;
+
+    const validVersions = ['bangla', 'english', 'british', 'ib'];
+    if (curriculumVersion && !validVersions.includes(curriculumVersion)) {
+      return res.status(400).json({ message: 'Invalid curriculum version.' });
+    }
+
+    const result = await pool.query(
+      `UPDATE users
+       SET curriculum_version = COALESCE($1, curriculum_version),
+           academic_level = COALESCE($2, academic_level),
+           stream = COALESCE($3, stream),
+           updated_at = NOW()
+       WHERE id = $4
+       RETURNING id, email, full_name as "fullName", role, is_verified as "isVerified",
+                 curriculum_version as "curriculumVersion", academic_level as "academicLevel",
+                 stream, is_subscribed as "isSubscribed", subscription_status as "subscriptionStatus",
+                 subscription_curriculum as "subscriptionCurriculum", created_at as "createdAt"`,
+      [curriculumVersion || null, academicLevel || null, stream || null, userId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    res.json({
+      success: true,
+      user: result.rows[0],
+      message: 'শিক্ষার্থীর কারিকুলাম ও পরীক্ষার তথ্য সফলভাবে আপডেট করা হয়েছে।',
+    });
+  } catch (error) {
+    console.error('Admin update user curriculum error:', error);
+    res.status(500).json({ message: 'Failed to update student curriculum.' });
+  }
+});
+
+// Admin: Manual Subscribe / Unsubscribe a student
+app.put('/api/admin/users/:userId/subscription', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { userId } = req.params;
+    const { isSubscribed, subscriptionCurriculum } = req.body;
+
+    let result;
+    if (isSubscribed) {
+      result = await pool.query(
+        `UPDATE users
+         SET is_subscribed = TRUE,
+             subscription_status = 'active',
+             subscription_curriculum = COALESCE($1, curriculum_version, 'bangla'),
+             subscription_activated_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $2
+         RETURNING id, email, full_name as "fullName", role, is_verified as "isVerified",
+                   curriculum_version as "curriculumVersion", academic_level as "academicLevel",
+                   stream, is_subscribed as "isSubscribed", subscription_status as "subscriptionStatus",
+                   subscription_curriculum as "subscriptionCurriculum", created_at as "createdAt"`,
+        [subscriptionCurriculum || null, userId]
+      );
+    } else {
+      result = await pool.query(
+        `UPDATE users
+         SET is_subscribed = FALSE,
+             subscription_status = 'free',
+             subscription_expires_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, email, full_name as "fullName", role, is_verified as "isVerified",
+                   curriculum_version as "curriculumVersion", academic_level as "academicLevel",
+                   stream, is_subscribed as "isSubscribed", subscription_status as "subscriptionStatus",
+                   subscription_curriculum as "subscriptionCurriculum", created_at as "createdAt"`,
+        [userId]
+      );
+    }
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const updatedUser = result.rows[0];
+    const msg = isSubscribed
+      ? `${updatedUser.fullName}-এর সাবস্ক্রিপশন সফলভাবে সক্রিয় করা হয়েছে (PRO আনলকড)!`
+      : `${updatedUser.fullName}-এর সাবস্ক্রিপশন সফলভাবে বাতিল করা হয়েছে (ফ্রি ট্রায়াল)!`;
+
+    res.json({
+      success: true,
+      user: updatedUser,
+      message: msg,
+    });
+  } catch (error) {
+    console.error('Admin update user subscription error:', error);
+    res.status(500).json({ message: 'Failed to update student subscription status.' });
   }
 });
 
@@ -1525,6 +2315,14 @@ initDatabase()
     });
   })
   .catch((err) => {
-    console.error('❌ Failed to initialize database:', err);
+    console.error('\n❌ [DATABASE CONNECTION ERROR] Failed to connect to PostgreSQL:');
+    console.error(err?.message || err);
+    console.error('\n👉 Troubleshooting Guide for Contributors / Windows:');
+    console.error('   1. Is PostgreSQL installed and running on your machine?');
+    console.error('      - Windows: Open "Services" (services.msc) and ensure "postgresql-x64-..." is Running.');
+    console.error('   2. Does the database exist? Run: createdb mcq_onushilon (or in pgAdmin / psql: CREATE DATABASE mcq_onushilon;)');
+    console.error('   3. If your postgres user has a password, set DATABASE_URL in .env:');
+    console.error('      DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@localhost:5432/mcq_onushilon"');
+    console.error('   4. Alternatively, use a free cloud PostgreSQL database from https://neon.tech or https://supabase.com\n');
     process.exit(1);
   });
