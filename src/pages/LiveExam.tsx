@@ -22,6 +22,8 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBeforeUnload, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { Sparkles } from 'lucide-react';
+import SubscriptionModal from '../components/subscription/SubscriptionModal';
 
 type LiveExamLocationState = {
   returnTo?: string;
@@ -49,6 +51,8 @@ const LiveExam = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [isLeaveDialogOpen, setIsLeaveDialogOpen] = useState(false);
+  const [requiresSubscription, setRequiresSubscription] = useState(false);
+  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
 
   const examContainerRef = useRef<HTMLDivElement>(null);
   const skipLeaveGuardRef = useRef(false);
@@ -77,17 +81,6 @@ const LiveExam = () => {
         navigate('/dashboard');
         return;
       }
-
-      const accessData = await apiJson<{ hasAccess: boolean }>(
-        `/api/subjects/${data.subjectId}/access`
-      ).catch(() => ({ hasAccess: false }));
-
-      if (!canAccessExam(data, accessData.hasAccess)) {
-        toast.error('This exam is locked. Unlock the subject to continue.');
-        navigate(`/subjects/${data.subjectId}`);
-        return;
-      }
-
       setExamData(data);
 
       if (timeLeft === null) {
@@ -96,9 +89,14 @@ const LiveExam = () => {
 
       const questionsList = await apiJson<QuestionLookup[]>(`/api/exams/${examId}/questions`);
       setQuestions(questionsList.sort((a, b) => (a.serialNumber || 0) - (b.serialNumber || 0)));
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching exam data:', error);
-      toast.error('ডাটা লোড করতে সমস্যা হয়েছে');
+      if (error?.requiresSubscription || error?.status === 403 || String(error?.message).includes('ফ্রি টেস্ট')) {
+        setRequiresSubscription(true);
+        setIsSubscriptionModalOpen(true);
+      } else {
+        toast.error(error?.message || 'ডাটা লোড করতে সমস্যা হয়েছে');
+      }
     } finally {
       setLoading(false);
     }
@@ -276,6 +274,44 @@ const LiveExam = () => {
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
           <p className="font-semibold">পরীক্ষার প্রশ্নপত্র লোড হচ্ছে...</p>
         </div>
+      </div>
+    );
+  }
+
+  if (requiresSubscription) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-slate-50 p-4 font-sans text-slate-900">
+        <div className="max-w-md w-full p-8 rounded-3xl bg-white border border-slate-200 shadow-xl text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto shadow-sm">
+            <Sparkles className="w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 font-bengali">
+            সাবস্ক্রিপশন আবশ্যক
+          </h2>
+          <p className="text-sm text-slate-600 leading-relaxed font-bengali">
+            আপনি ইতিমধ্যে ৩টি ফ্রি টেস্টের সুযোগ ব্যবহার করে ফেলেছেন। পরবর্তী সকল মডেল টেস্ট ও বোর্ড প্রশ্ন আনলক করতে সাবস্ক্রিপশন গ্রহণ করুন।
+          </p>
+          <div className="pt-2 flex flex-col gap-2.5">
+            <Button
+              onClick={() => setIsSubscriptionModalOpen(true)}
+              className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-md cursor-pointer"
+            >
+              সাবস্ক্রিপশন গ্রহণ করুন
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => navigate('/dashboard')}
+              className="w-full h-11 rounded-xl text-slate-600 hover:text-slate-900 text-xs font-semibold cursor-pointer"
+            >
+              ড্যাশবোর্ডে ফিরে যান
+            </Button>
+          </div>
+        </div>
+        <SubscriptionModal
+          isOpen={isSubscriptionModalOpen}
+          onClose={() => setIsSubscriptionModalOpen(false)}
+          onSuccess={() => void fetchExamData()}
+        />
       </div>
     );
   }

@@ -10,8 +10,8 @@ export interface AuthUser {
   fullName: string;
   role: 'student' | 'admin';
   isVerified?: boolean;
-  curriculumVersion?: 'bangla' | 'english' | null;
-  academicLevel?: 'hsc' | 'ssc' | null;
+  curriculumVersion?: 'bangla' | 'english' | 'british' | 'ib' | null;
+  academicLevel?: 'hsc' | 'ssc' | 'alevel' | 'olevel' | 'dp' | 'myp' | null;
   stream?: 'science' | 'commerce' | 'humanities' | 'common' | null;
 }
 

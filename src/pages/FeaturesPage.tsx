@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Button } from '@/components/ui/button';
+import { useAuthStore } from '../lib/authStore';
 import {
   Clock,
   CheckCircle,
@@ -11,10 +12,15 @@ import {
   Smartphone,
   GraduationCap,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  LayoutDashboard,
+  User as UserIcon,
 } from 'lucide-react';
 
 const FeaturesPage = () => {
+  const { user } = useAuthStore();
+  const dashboardLink = user?.role === 'admin' ? '/admin/dashboard' : '/dashboard';
+
   const features = [
     {
       title: 'টাইমড পরীক্ষা',
@@ -80,16 +86,39 @@ const FeaturesPage = () => {
           </Link>
 
           <div className="flex items-center gap-3 sm:gap-4">
-            <Link to="/login">
-              <Button variant="ghost" className="font-bold text-slate-700 hover:bg-slate-100 rounded-xl px-5 font-bengali">
-                লগইন
-              </Button>
-            </Link>
-            <Link to="/register">
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl px-6 shadow-md shadow-blue-600/25 border-none font-bengali">
-                ফ্রি শুরু করুন
-              </Button>
-            </Link>
+            {user ? (
+              <>
+                <Link to={dashboardLink}>
+                  <Button className="bg-[#006837] hover:bg-[#00522c] text-white font-bold rounded-xl px-4 h-10 shadow-sm font-bengali text-sm cursor-pointer flex items-center gap-2">
+                    <LayoutDashboard className="w-4 h-4" />
+                    <span>ড্যাশবোর্ড</span>
+                  </Button>
+                </Link>
+
+                <Link to="/profile">
+                  <Button
+                    variant="outline"
+                    className="border-slate-200 hover:bg-slate-100 text-slate-700 font-bold rounded-xl px-4 h-10 font-bengali text-sm cursor-pointer flex items-center gap-1.5 shadow-xs"
+                  >
+                    <UserIcon className="w-4 h-4 text-emerald-600" />
+                    <span className="max-w-[120px] truncate">{user.name || 'প্রোফাইল'}</span>
+                  </Button>
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link to="/login">
+                  <Button variant="ghost" className="font-bold text-slate-700 hover:bg-slate-100 rounded-xl px-5 font-bengali">
+                    লগইন
+                  </Button>
+                </Link>
+                <Link to="/register">
+                  <Button className="bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl px-6 shadow-md shadow-blue-600/25 border-none font-bengali">
+                    ফ্রি শুরু করুন
+                  </Button>
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </nav>

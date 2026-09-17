@@ -39,6 +39,13 @@ export const initDatabase = async () => {
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS curriculum_version VARCHAR(20) DEFAULT NULL;`);
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS academic_level VARCHAR(20) DEFAULT 'hsc';`);
     await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stream VARCHAR(20) DEFAULT 'science';`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS institution VARCHAR(255);`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_subscribed BOOLEAN DEFAULT FALSE;`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(50) DEFAULT 'free';`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_curriculum VARCHAR(20);`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_activated_at TIMESTAMPTZ;`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMPTZ;`);
 
     // 2. Subjects table
     await client.query(`
@@ -66,19 +73,44 @@ export const initDatabase = async () => {
         id VARCHAR(50) PRIMARY KEY DEFAULT 'default',
         bkash_number VARCHAR(50),
         bkash_account_name VARCHAR(255),
+        nagad_number VARCHAR(50) DEFAULT '01800000000',
+        nagad_account_name VARCHAR(255) DEFAULT 'MCQ Onushilon (Personal)',
+        price_bangla NUMERIC(10, 2) DEFAULT 499,
+        price_english NUMERIC(10, 2) DEFAULT 699,
+        price_british NUMERIC(10, 2) DEFAULT 1200,
+        price_ib NUMERIC(10, 2) DEFAULT 1500,
         payment_instructions TEXT,
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS nagad_number VARCHAR(50) DEFAULT '01800000000';`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS nagad_account_name VARCHAR(255) DEFAULT 'MCQ Onushilon (Personal)';`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS price_bangla NUMERIC(10, 2) DEFAULT 499;`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS price_english NUMERIC(10, 2) DEFAULT 699;`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS price_british NUMERIC(10, 2) DEFAULT 1200;`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS price_ib NUMERIC(10, 2) DEFAULT 1500;`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS original_price_bangla NUMERIC(10, 2) DEFAULT 999;`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS original_price_english NUMERIC(10, 2) DEFAULT 1299;`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS original_price_british NUMERIC(10, 2) DEFAULT 2000;`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS original_price_ib NUMERIC(10, 2) DEFAULT 2500;`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS discount_title VARCHAR(255) DEFAULT 'সীমিত সময়ের মেগা অফার!';`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS discount_expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '3 days');`);
+    await client.query(`ALTER TABLE payment_settings ADD COLUMN IF NOT EXISTS discount_active BOOLEAN DEFAULT TRUE;`);
 
     // Ensure default row exists
     await client.query(`
-      INSERT INTO payment_settings (id, bkash_number, bkash_account_name, payment_instructions)
+      INSERT INTO payment_settings (id, bkash_number, bkash_account_name, nagad_number, nagad_account_name, price_bangla, price_english, price_british, price_ib, payment_instructions)
       VALUES (
         'default',
         '01700000000',
-        'MCQ Onushilon',
-        '1. Send exact amount to the bKash number above via Send Money.\n2. Keep your transaction ID.\n3. Enter your bKash number and transaction ID below to unlock immediately.'
+        'MCQ Onushilon (Personal)',
+        '01800000000',
+        'MCQ Onushilon (Personal)',
+        499,
+        699,
+        1200,
+        1500,
+        '১. উপরে প্রদর্শিত বিকাশ বা নগদ পার্সোনাল নম্বরে সেন্ড মানি (Send Money) করুন।\n২. পেমেন্ট সম্পন্ন হওয়ার পর প্রাপ্ত Transaction ID (TrxID) সংরক্ষণ করুন।\n৩. নিচে আপনার প্রেরক নম্বর ও TrxID লিখে সাবমিট করুন। অ্যাডমিন অনুমোদনের সাথে সাথে আনলিমিটেড এক্সেস চালু হবে।'
       )
       ON CONFLICT (id) DO NOTHING;
     `);
@@ -106,6 +138,24 @@ export const initDatabase = async () => {
     await client.query(`ALTER TABLE exams ADD COLUMN IF NOT EXISTS exam_type VARCHAR(50) DEFAULT 'model_test';`);
     await client.query(`ALTER TABLE exams ADD COLUMN IF NOT EXISTS board_name VARCHAR(100);`);
     await client.query(`ALTER TABLE exams ADD COLUMN IF NOT EXISTS exam_year INTEGER;`);
+
+    // 4.1 Chapters table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chapters (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+        chapter_number INTEGER NOT NULL DEFAULT 1,
+        title VARCHAR(255) NOT NULL,
+        title_bn VARCHAR(255) NOT NULL,
+        description TEXT,
+        serial_number INTEGER DEFAULT 1,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_chapters_subject_id ON chapters(subject_id);`);
+    await client.query(`ALTER TABLE exams ADD COLUMN IF NOT EXISTS chapter_id UUID REFERENCES chapters(id) ON DELETE SET NULL;`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_exams_chapter_id ON exams(chapter_id);`);
 
     // 5. Questions table
     await client.query(`
@@ -193,6 +243,10 @@ export const initDatabase = async () => {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
     `);
+    await client.query(`ALTER TABLE manual_payment_requests ALTER COLUMN subject_id DROP NOT NULL;`);
+    await client.query(`ALTER TABLE manual_payment_requests ADD COLUMN IF NOT EXISTS plan_type VARCHAR(50) DEFAULT 'curriculum_subscription';`);
+    await client.query(`ALTER TABLE manual_payment_requests ADD COLUMN IF NOT EXISTS curriculum_version VARCHAR(20) DEFAULT 'bangla';`);
+    await client.query(`ALTER TABLE manual_payment_requests ADD COLUMN IF NOT EXISTS sender_number VARCHAR(50);`);
 
     // 10. Payment sessions table (automated bKash)
     await client.query(`
@@ -478,5 +532,13 @@ export const initDatabase = async () => {
     await seedBritishAndIbCurriculum();
   } catch (intlErr) {
     console.error('Failed to seed British and IB curriculum:', intlErr);
+  }
+
+  // Safe ingestion of Subject Chapters and Chapter Model Tests
+  try {
+    const { seedSubjectChapters } = await import('./seed_subject_chapters.js');
+    await seedSubjectChapters(pool);
+  } catch (chapterErr) {
+    console.error('Failed to seed subject chapters:', chapterErr);
   }
 };

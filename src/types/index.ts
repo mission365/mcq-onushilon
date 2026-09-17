@@ -10,6 +10,11 @@ export interface Profile {
   curriculumVersion?: CurriculumVersion | null;
   academicLevel?: AcademicLevel | null;
   stream?: 'science' | 'commerce' | 'humanities' | 'common' | null;
+  phone?: string | null;
+  institution?: string | null;
+  isSubscribed?: boolean;
+  subscriptionStatus?: string;
+  subscriptionCurriculum?: string;
   createdAt: any;
 }
 
@@ -30,13 +35,61 @@ export interface PaymentSettings {
   id: string;
   bkashNumber: string;
   bkashAccountName?: string;
+  nagadNumber: string;
+  nagadAccountName?: string;
+  priceBangla: number;
+  priceEnglish: number;
+  priceBritish: number;
+  priceIb: number;
+  originalPriceBangla?: number;
+  originalPriceEnglish?: number;
+  originalPriceBritish?: number;
+  originalPriceIb?: number;
+  discountTitle?: string;
+  discountExpiresAt?: string | null;
+  discountActive?: boolean;
   paymentInstructions?: string;
   updatedAt?: any;
+}
+
+export interface UserSubscriptionStatus {
+  isSubscribed: boolean;
+  subscriptionStatus: 'free' | 'pending' | 'active' | 'expired';
+  subscriptionCurriculum: CurriculumVersion;
+  curriculumVersion: CurriculumVersion;
+  examsTakenCount: number;
+  totalAttempts: number;
+  freeLimit: number;
+  freeTestsUsed: number;
+  freeTestsRemaining: number;
+  canTakeExam: boolean;
+  pendingPayment?: {
+    id: string;
+    amount: number;
+    currency: string;
+    gateway: string;
+    senderNumber: string;
+    transactionId: string;
+    status: string;
+    createdAt: string;
+  } | null;
+}
+
+export interface Chapter {
+  id: string;
+  subjectId: string;
+  chapterNumber: number;
+  title: string;
+  titleBn: string;
+  description?: string;
+  serialNumber?: number;
+  examCount?: number;
 }
 
 export interface Exam {
   id: string;
   subjectId: string;
+  chapterId?: string;
   title: string;
   serialNumber: number;
   durationMinutes: number;

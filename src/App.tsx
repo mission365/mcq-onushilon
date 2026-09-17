@@ -16,6 +16,9 @@ import SubjectExams from '@/src/pages/SubjectExams';
 import LiveExam from '@/src/pages/LiveExam';
 import ResultPage from '@/src/pages/ResultPage';
 import BkashPaymentCallback from '@/src/pages/BkashPaymentCallback';
+import ProfilePage from '@/src/pages/ProfilePage';
+import BoardQuestionsPage from '@/src/pages/BoardQuestionsPage';
+import SubscriptionPage from '@/src/pages/SubscriptionPage';
 
 // Admin Pages
 import AdminDashboard from '@/src/pages/admin/AdminDashboard';
@@ -23,6 +26,7 @@ import AdminSubjects from '@/src/pages/admin/AdminSubjects';
 import AdminExams from '@/src/pages/admin/AdminExams';
 import AdminQuestions from '@/src/pages/admin/AdminQuestions';
 import AdminManualPayments from '@/src/pages/admin/AdminManualPayments';
+import AdminStudents from '@/src/pages/admin/AdminStudents';
 
 const ProtectedRoute = ({ role }: { role?: 'student' | 'admin' }) => {
   const { user, isAuthenticated } = useAuthStore();
@@ -59,11 +63,16 @@ export default function App() {
           <Route path="/subjects/:subjectId" element={<SubjectExams />} />
           <Route path="/exam/:examId/start" element={<LiveExam />} />
           <Route path="/exam/:attemptId/result" element={<ResultPage />} />
+          <Route path="/board-questions" element={<BoardQuestionsPage />} />
+          <Route path="/past-papers" element={<BoardQuestionsPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/subscription" element={<SubscriptionPage />} />
         </Route>
 
         {/* Admin Routes */}
         <Route element={<ProtectedRoute role="admin" />}>
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
+          <Route path="/admin/students" element={<AdminStudents />} />
           <Route path="/admin/subjects" element={<AdminSubjects />} />
           <Route path="/admin/exams" element={<AdminExams />} />
           <Route path="/admin/exams/:examId/questions" element={<AdminQuestions />} />

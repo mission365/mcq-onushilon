@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../lib/authStore';
 import { apiJson } from '../lib/api';
@@ -16,9 +16,18 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 
+import { toast } from 'sonner';
+
 export const SelectVersionPage: React.FC = () => {
   const navigate = useNavigate();
   const { user, setCurriculumVersion, setAcademicLevel, setStream } = useAuthStore();
+
+  useEffect(() => {
+    if (user?.curriculumVersion && user?.role !== 'admin') {
+      toast.info('আপনার কারিকুলাম ও পরীক্ষার স্তর ইতিমধ্যেই স্থায়ীভাবে সংরক্ষিত রয়েছে।');
+      navigate('/dashboard', { replace: true });
+    }
+  }, [user, navigate]);
 
   const [selectedVersion, setSelectedVersion] = useState<CurriculumVersion>(
     user?.curriculumVersion || 'bangla'

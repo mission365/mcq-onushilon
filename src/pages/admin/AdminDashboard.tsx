@@ -100,11 +100,12 @@ const AdminDashboard = () => {
                  Quick Navigation <ChevronRight className="w-5 h-5 text-gray-300" />
               </h3>
               <div className="space-y-3">
-                 {[
-                   { title: "ম্যানেজ বিষয়সমূহ", desc: "বিষয় পরিবর্তন বা ডিলিট করুন", path: "/admin/subjects" },
-                   { title: "মডেল টেস্ট ম্যানেজমেন্ট", desc: "নতুন পরীক্ষা ও সেটিং যুক্ত করুন", path: "/admin/exams" },
-                   { title: "পেমেন্ট রিকোয়েস্ট", desc: "bKash সাবমিশন approve/reject করুন", path: "/admin/payments" }
-                 ].map((nav, i) => (
+                  {[
+                    { title: "শিক্ষার্থী ও কারিকুলাম ম্যানেজমেন্ট", desc: "ইমেইল দিয়ে সার্চ করে কারিকুলাম ও গ্রুপ পরিবর্তন করুন", path: "/admin/students" },
+                    { title: "ম্যানেজ বিষয়সমূহ", desc: "বিষয় পরিবর্তন বা ডিলিট করুন", path: "/admin/subjects" },
+                    { title: "মডেল টেস্ট ম্যানেজমেন্ট", desc: "নতুন পরীক্ষা ও সেটিং যুক্ত করুন", path: "/admin/exams" },
+                    { title: "পেমেন্ট রিকোয়েস্ট", desc: "bKash সাবমিশন approve/reject করুন", path: "/admin/payments" }
+                  ].map((nav, i) => (
                    <Link key={i} to={nav.path} className="flex items-center justify-between p-4 rounded-2xl bg-gray-50 hover:bg-blue-50 border border-gray-100 hover:border-blue-200 transition-all group">
                       <div>
                         <h4 className="font-bold font-bengali text-gray-900 group-hover:text-blue-700">{nav.title}</h4>

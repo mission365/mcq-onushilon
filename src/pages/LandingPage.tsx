@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Button } from '@/components/ui/button';
+import { useAuthStore } from '../lib/authStore';
 import {
   BookOpen,
   CheckCircle,
@@ -23,10 +24,15 @@ import {
   Atom,
   FlaskConical,
   Dna,
-  Binary
+  Binary,
+  LayoutDashboard,
+  User as UserIcon,
 } from 'lucide-react';
 
 const LandingPage = () => {
+  const { user } = useAuthStore();
+  const dashboardLink = user?.role === 'admin' ? '/admin/dashboard' : '/dashboard';
+
   return (
     <div className="min-h-screen bg-white font-sans text-slate-900 selection:bg-blue-100 selection:text-blue-700">
       {/* Section 1: Navbar (Height: 80px, pure white, border: 1px solid #EAEFF5) */}
@@ -40,27 +46,52 @@ const LandingPage = () => {
             />
           </Link>
 
-          <div className="flex items-center gap-1.5 sm:gap-4 shrink-0">
-            {/* Free 3 model test pill badge */}
-            <div className="hidden md:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700 text-xs font-semibold">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>ফ্রি ৩টি মডেল টেস্ট</span>
-            </div>
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            {/* Free 3 model test pill badge or authenticated status */}
+            {!user ? (
+              <div className="hidden md:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700 text-xs font-semibold">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                <span>ফ্রি ৩টি মডেল টেস্ট</span>
+              </div>
+            ) : null}
 
-            <Link to="/login">
-              <Button
-                variant="ghost"
-                className="text-slate-700 font-bold hover:bg-slate-100/80 rounded-xl px-3 sm:px-5 h-9 sm:h-10 font-bengali text-xs sm:text-base cursor-pointer"
-              >
-                লগইন
-              </Button>
-            </Link>
+            {user ? (
+              <>
+                <Link to={dashboardLink}>
+                  <Button className="bg-[#006837] hover:bg-[#00522c] text-white font-bold rounded-xl px-3 sm:px-5 h-9 sm:h-11 shadow-sm font-bengali text-xs sm:text-sm cursor-pointer flex items-center gap-2">
+                    <LayoutDashboard className="w-4 h-4" />
+                    <span>ড্যাশবোর্ড</span>
+                  </Button>
+                </Link>
 
-            <Link to="/register">
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl px-3.5 sm:px-7 h-9 sm:h-11 shadow-md shadow-blue-600/25 border-none font-bengali text-xs sm:text-base cursor-pointer">
-                ফ্রি শুরু করুন
-              </Button>
-            </Link>
+                <Link to="/profile">
+                  <Button
+                    variant="outline"
+                    className="border-slate-200 hover:bg-slate-100 text-slate-700 font-bold rounded-xl px-3 sm:px-4 h-9 sm:h-11 font-bengali text-xs sm:text-sm cursor-pointer flex items-center gap-1.5 shadow-xs"
+                  >
+                    <UserIcon className="w-4 h-4 text-emerald-600" />
+                    <span className="max-w-[120px] truncate">{user.name || 'প্রোফাইল'}</span>
+                  </Button>
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link to="/login">
+                  <Button
+                    variant="ghost"
+                    className="text-slate-700 font-bold hover:bg-slate-100/80 rounded-xl px-3 sm:px-5 h-9 sm:h-10 font-bengali text-xs sm:text-base cursor-pointer"
+                  >
+                    লগইন
+                  </Button>
+                </Link>
+
+                <Link to="/register">
+                  <Button className="bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl px-3.5 sm:px-7 h-9 sm:h-11 shadow-md shadow-blue-600/25 border-none font-bengali text-xs sm:text-base cursor-pointer">
+                    ফ্রি শুরু করুন
+                  </Button>
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </nav>
@@ -108,24 +139,51 @@ const LandingPage = () => {
 
                 {/* CTA Buttons */}
                 <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-6 sm:mb-8">
-                  <Link to="/register" className="w-full sm:w-auto">
-                    <Button
-                      size="lg"
-                      className="w-full sm:w-auto h-12 sm:h-14 px-6 sm:px-8 text-base sm:text-lg font-bengali font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/30 gap-2 cursor-pointer transition-transform hover:-translate-y-0.5"
-                    >
-                      পরীক্ষা শুরু করো <ArrowRight className="w-5 h-5" />
-                    </Button>
-                  </Link>
+                  {user ? (
+                    <>
+                      <Link to={dashboardLink} className="w-full sm:w-auto">
+                        <Button
+                          size="lg"
+                          className="w-full sm:w-auto h-12 sm:h-14 px-6 sm:px-8 text-base sm:text-lg font-bengali font-bold rounded-xl bg-[#006837] hover:bg-[#00522c] text-white shadow-lg shadow-emerald-800/25 gap-2 cursor-pointer transition-transform hover:-translate-y-0.5"
+                        >
+                          <LayoutDashboard className="w-5 h-5" />
+                          ড্যাশবোর্ডে প্রবেশ করো <ArrowRight className="w-5 h-5" />
+                        </Button>
+                      </Link>
 
-                  <Link to="/dashboard" className="w-full sm:w-auto">
-                    <Button
-                      size="lg"
-                      variant="outline"
-                      className="w-full sm:w-auto h-12 sm:h-14 px-5 sm:px-7 text-base sm:text-lg font-bengali font-bold rounded-xl border-2 border-slate-300 text-slate-700 hover:bg-white hover:border-blue-500 hover:text-blue-600 transition-all cursor-pointer"
-                    >
-                      ডেমো দেখো / ড্যাশবোর্ড ঘুরে দেখো
-                    </Button>
-                  </Link>
+                      <Link to="/profile" className="w-full sm:w-auto">
+                        <Button
+                          size="lg"
+                          variant="outline"
+                          className="w-full sm:w-auto h-12 sm:h-14 px-5 sm:px-7 text-base sm:text-lg font-bengali font-bold rounded-xl border-2 border-slate-300 text-slate-700 hover:bg-white hover:border-emerald-600 hover:text-emerald-700 transition-all cursor-pointer flex items-center gap-2"
+                        >
+                          <UserIcon className="w-5 h-5 text-emerald-600" />
+                          প্রোফাইল ও ফলাফল দেখুন
+                        </Button>
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      <Link to="/register" className="w-full sm:w-auto">
+                        <Button
+                          size="lg"
+                          className="w-full sm:w-auto h-12 sm:h-14 px-6 sm:px-8 text-base sm:text-lg font-bengali font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/30 gap-2 cursor-pointer transition-transform hover:-translate-y-0.5"
+                        >
+                          পরীক্ষা শুরু করো <ArrowRight className="w-5 h-5" />
+                        </Button>
+                      </Link>
+
+                      <Link to="/dashboard" className="w-full sm:w-auto">
+                        <Button
+                          size="lg"
+                          variant="outline"
+                          className="w-full sm:w-auto h-12 sm:h-14 px-5 sm:px-7 text-base sm:text-lg font-bengali font-bold rounded-xl border-2 border-slate-300 text-slate-700 hover:bg-white hover:border-blue-500 hover:text-blue-600 transition-all cursor-pointer"
+                        >
+                          ডেমো দেখো / ড্যাশবোর্ড ঘুরে দেখো
+                        </Button>
+                      </Link>
+                    </>
+                  )}
                 </div>
 
                 {/* Below CTA: 3 Small Trust Chips */}
