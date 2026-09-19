@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 title MCQOnushilon - Unified Development Runner (Windows)
 
 echo ======================================================================
-echo             MCQOnushilon Unified Development Runner
+echo             MCQOnushilon Unified Development Runner (Windows)
 echo ======================================================================
 echo.
 
@@ -45,24 +45,53 @@ if not exist ".env" (
     if exist ".env.example" (
         echo [WARN] No .env file found. Copying .env.example to .env...
         copy ".env.example" ".env" >nul
-        echo [INFO] Created .env. Please configure your DATABASE_URL and SMTP credentials.
+        echo [INFO] Created .env. Please configure your DATABASE_URL and Firebase/bKash credentials.
     ) else (
         echo [WARN] Neither .env nor .env.example found!
     )
 )
 
+:: 5. Free occupied ports (8787 and 3000) if lingering from previous run
+echo [INFO] Checking for lingering processes on ports 8787 and 3000...
+for /f "tokens=5" %%p in ('netstat -aon ^| findstr /r /c:":8787 .*LISTENING"') do (
+    echo [WARN] Port 8787 is occupied by PID %%p. Freeing port...
+    taskkill /f /pid %%p >nul 2>&1
+)
+for /f "tokens=5" %%p in ('netstat -aon ^| findstr /r /c:":3000 .*LISTENING"') do (
+    echo [WARN] Port 3000 is occupied by PID %%p. Freeing port...
+    taskkill /f /pid %%p >nul 2>&1
+)
+
+:: 6. Check PostgreSQL port 5432
+netstat -aon | findstr /r /c:":5432 .*LISTENING" >nul 2>&1
+if %ERRORLEVEL% neq 0 (
+    echo [WARN] PostgreSQL does not appear to be listening on port 5432.
+    echo Ensure PostgreSQL service is Running in Windows Services (services.msc).
+)
+
 echo.
 echo [INFO] Environment check complete.
 echo.
-echo Starting Services:
-echo   * [SERVER :8787] Express Backend API (tsx watch server/index.ts)
-echo   * [CLIENT :3000] Vite Frontend Client (http://localhost:3000)
-echo.
-echo Press Ctrl+C at any time in this window to stop both services.
+echo ======================================================================
+echo          MCQOnushilon Development Environment (Windows)
+echo ======================================================================
+echo   * Backend API :  http://localhost:8787 (Express API)
+echo   * Frontend UI :  http://localhost:3000 (Vite Client)
+echo   * Press Ctrl+C at any time to stop both services cleanly.
 echo ======================================================================
 echo.
 
-:: 5. Launch both server and client together using concurrently
-call npx concurrently -n "SERVER,CLIENT" -c "cyan,green" "npm run dev:server" "npm run dev:client"
+:: 7. Launch both server and client together using concurrently with -k (kill others on exit)
+call npx concurrently -k -n "SERVER,CLIENT" -c "cyan,green" "npm run dev:server" "npm run dev:client"
 
+:: 8. Clean up any remaining processes on ports when terminated
+for /f "tokens=5" %%p in ('netstat -aon ^| findstr /r /c:":8787 .*LISTENING"') do (
+    taskkill /f /pid %%p >nul 2>&1
+)
+for /f "tokens=5" %%p in ('netstat -aon ^| findstr /r /c:":3000 .*LISTENING"') do (
+    taskkill /f /pid %%p >nul 2>&1
+)
+
+echo.
+echo [INFO] All services stopped successfully.
 pause
