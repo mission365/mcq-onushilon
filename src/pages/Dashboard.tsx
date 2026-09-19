@@ -408,7 +408,9 @@ const Dashboard = () => {
                 {isEnglishUi ? subject.name : subject.nameBn}
               </CardTitle>
               <p className="text-xs text-slate-400 font-sans mt-0.5 truncate">
-                {isEnglishUi ? subject.nameBn : subject.name}
+                {isEnglishUi
+                  ? (subject.nameBn && subject.nameBn !== subject.name ? subject.nameBn : '')
+                  : subject.name}
               </p>
             </CardHeader>
 

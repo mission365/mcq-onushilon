@@ -1078,9 +1078,13 @@ export const seedSubjectChapters = async (pool: pg.Pool) => {
       const existingChCount = await client.query(`SELECT count(*) FROM chapters WHERE subject_id = $1`, [sub.id]);
       if (parseInt(existingChCount.rows[0].count, 10) === 0) {
         // Create 3 standard chapters for this subject
+        const isBangla = sub.curriculum_version === 'bangla';
+        const isBritishOrCambridge = sub.curriculum_version === 'british' || sub.curriculum_version === 'cambridge';
+        const prefix = isBritishOrCambridge ? 'Topic' : 'Chapter';
+
         for (let i = 1; i <= 3; i++) {
-          const chTitleBn = `অধ্যায় ০${i}: মূল ধারণা ও অনুশীলন`;
-          const chTitleEn = `Chapter ${i}: Core Concepts & Practice`;
+          const chTitleBn = isBangla ? `অধ্যায় ০${i}: মূল ধারণা ও অনুশীলন` : `${prefix} ${i}: Core Concepts & Practice`;
+          const chTitleEn = `${prefix} ${i}: Core Concepts & Practice`;
           const newCh = await client.query(
             `INSERT INTO chapters (subject_id, chapter_number, title, title_bn, serial_number)
              VALUES ($1, $2, $3, $4, $5) RETURNING id`,
@@ -1090,7 +1094,12 @@ export const seedSubjectChapters = async (pool: pg.Pool) => {
           totalChaptersInserted++;
 
           // Create model test
-          const examTitle = `অধ্যায় ০${i}: মডেল টেস্ট ০১ (${sub.name_bn || sub.name})`;
+          const examTitle = isBangla
+            ? `অধ্যায় ০${i}: মডেল টেস্ট ০১ (${sub.name_bn || sub.name})`
+            : `${prefix} 0${i}: Model Test 01 (${sub.name})`;
+          const instructions = isBangla
+            ? 'অধ্যায়ভিত্তিক প্রস্তুতিমূলক পরীক্ষা।'
+            : 'Chapter-wise practice model test.';
           const newExam = await client.query(
             `INSERT INTO exams (
               subject_id, chapter_id, title, serial_number, duration_minutes, 
@@ -1098,23 +1107,34 @@ export const seedSubjectChapters = async (pool: pg.Pool) => {
               curriculum_version, academic_level, exam_type
             ) VALUES (
               $1, $2, $3, $4, 15, 5, 0.25,
-              'অধ্যায়ভিত্তিক প্রস্তুতিমূলক পরীক্ষা।',
-              TRUE, $5, $6, 'model_test'
+              $5,
+              TRUE, $6, $7, 'model_test'
             ) RETURNING id`,
-            [sub.id, chId, examTitle, i, sub.curriculum_version, sub.academic_level]
+            [sub.id, chId, examTitle, i, instructions, sub.curriculum_version, sub.academic_level]
           );
           const examId = newExam.rows[0].id;
           totalExamsInserted++;
 
           // Seed 3 practice questions
-          await client.query(
-            `INSERT INTO questions (exam_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation, serial_number)
-             VALUES 
-             ($1, $2 || ' সংক্রান্ত প্রথম মৌলিক নিয়ম কোনটি?', 'নিয়ম ক', 'নিয়ম খ', 'নিয়ম গ', 'সবকটি', 'd', 'পাঠ্যবইয়ের সংশ্লিষ্ট অনুচ্ছেদ দ্রষ্টব্য।', 1),
-             ($1, 'নিচের কোনটি সঠিক সম্পর্ক প্রকাশ করে?', 'ক > খ', 'ক = খ', 'ক < খ', 'কোনটিই নয়', 'b', 'তত্ত্বীয় সূত্রানুসারে উভয় রাশি সমমানের।', 2),
-             ($1, 'পরীক্ষামূলক বিশ্লেষণে প্রাপ্ত ফলাফল কোনটির সাথে সংগতিপূর্ণ?', 'প্রমাণ মান', 'গড় মান', 'সর্বোচ্চ মান', 'সর্বনিম্ন মান', 'a', 'যথাযথ শর্তে প্রমাণ মানের অনুরূপ ফলাফল পাওয়া যায়।', 3)`,
-            [examId, sub.name_bn || sub.name]
-          );
+          if (isBangla) {
+            await client.query(
+              `INSERT INTO questions (exam_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation, serial_number)
+               VALUES 
+               ($1, $2 || ' সংক্রান্ত প্রথম মৌলিক নিয়ম কোনটি?', 'নিয়ম ক', 'নিয়ম খ', 'নিয়ম গ', 'সবকটি', 'd', 'পাঠ্যবইয়ের সংশ্লিষ্ট অনুচ্ছেদ দ্রষ্টব্য।', 1),
+               ($1, 'নিচের কোনটি সঠিক সম্পর্ক প্রকাশ করে?', 'ক > খ', 'ক = খ', 'ক < খ', 'কোনটিই নয়', 'b', 'তত্ত্বীয় সূত্রানুসারে উভয় রাশি সমমানের।', 2),
+               ($1, 'পরীক্ষামূলক বিশ্লেষণে প্রাপ্ত ফলাফল কোনটির সাথে সংগতিপূর্ণ?', 'প্রমাণ মান', 'গড় মান', 'সর্বোচ্চ মান', 'সর্বনিম্ন মান', 'a', 'যথাযথ শর্তে প্রমাণ মানের অনুরূপ ফলাফল পাওয়া যায়।', 3)`,
+              [examId, sub.name_bn || sub.name]
+            );
+          } else {
+            await client.query(
+              `INSERT INTO questions (exam_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation, serial_number)
+               VALUES 
+               ($1, 'What is a fundamental principle of ' || $2 || ' in this topic?', 'Principle A', 'Principle B', 'Principle C', 'All of the above', 'd', 'Refer to syllabus specification guidelines.', 1),
+               ($1, 'Which of the following represents a valid relationship in this topic?', 'Quantity A > Quantity B', 'Quantity A = Quantity B', 'Quantity A < Quantity B', 'None of these', 'b', 'Theoretical concepts show both expressions are equivalent.', 2),
+               ($1, 'In experimental evaluation, which benchmark is typically observed?', 'Standard reference value', 'Average measured value', 'Maximum observed value', 'Minimum observed value', 'a', 'Properly calibrated apparatus yields standard values.', 3)`,
+              [examId, sub.name]
+            );
+          }
           totalQuestionsInserted += 3;
         }
       }

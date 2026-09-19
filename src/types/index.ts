@@ -1,5 +1,5 @@
-export type CurriculumVersion = 'bangla' | 'english' | 'british' | 'ib';
-export type AcademicLevel = 'hsc' | 'ssc' | 'olevel' | 'alevel' | 'myp' | 'dp';
+export type CurriculumVersion = 'bangla' | 'english' | 'british' | 'cambridge' | 'ib';
+export type AcademicLevel = 'hsc' | 'ssc' | 'olevel' | 'alevel' | 'igcse' | 'myp' | 'dp';
 
 export interface Profile {
   id: string;
@@ -9,7 +9,7 @@ export interface Profile {
   isVerified?: boolean;
   curriculumVersion?: CurriculumVersion | null;
   academicLevel?: AcademicLevel | null;
-  stream?: 'science' | 'commerce' | 'humanities' | 'common' | null;
+  stream?: 'science' | 'commerce' | 'humanities' | 'common' | 'optional' | null;
   phone?: string | null;
   institution?: string | null;
   isSubscribed?: boolean;
@@ -25,9 +25,11 @@ export interface Subject {
   icon: string;
   isActive: boolean;
   unlockPrice?: number;
-  curriculumVersion?: CurriculumVersion | 'both';
-  academicLevel?: AcademicLevel;
-  stream?: 'science' | 'commerce' | 'humanities' | 'common';
+  curriculumVersion?: CurriculumVersion | 'both' | string;
+  academicLevel?: AcademicLevel | string;
+  stream?: 'science' | 'commerce' | 'humanities' | 'common' | 'optional' | string;
+  chapterCount?: number;
+  examCount?: number;
   createdAt: any;
 }
 
@@ -99,12 +101,15 @@ export interface Exam {
   isPublished: boolean;
   curriculumVersion?: CurriculumVersion | 'both';
   academicLevel?: AcademicLevel;
-  examType?: 'model_test' | 'board_question';
+  examType?: 'model_test' | 'board_question' | 'chapter_test';
   boardName?: string;
   examYear?: number;
   subjectNameBn?: string;
   subjectName?: string;
   subjectStream?: string;
+  chapterTitle?: string;
+  chapterTitleBn?: string;
+  chapterNumber?: number;
   createdAt: any;
 }
 

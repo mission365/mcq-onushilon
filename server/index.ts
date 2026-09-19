@@ -590,44 +590,47 @@ app.get('/api/subjects', optionalAuth, async (req: AuthenticatedRequest, res: Re
     const stream = typeof req.query?.stream === 'string' ? req.query.stream.trim().toLowerCase() : '';
 
     let queryText = `
-      SELECT id, name, name_bn as "nameBn", icon, is_active as "isActive",
-             unlock_price as "unlockPrice", curriculum_version as "curriculumVersion",
-             academic_level as "academicLevel", stream, created_at as "createdAt"
-      FROM subjects
+      SELECT s.id, s.name, s.name_bn as "nameBn", s.icon, s.is_active as "isActive",
+             s.unlock_price as "unlockPrice", s.curriculum_version as "curriculumVersion",
+             s.academic_level as "academicLevel", s.stream, s.created_at as "createdAt",
+             COUNT(DISTINCT c.id)::int as "chapterCount",
+             COUNT(DISTINCT e.id)::int as "examCount"
+      FROM subjects s
+      LEFT JOIN chapters c ON s.id = c.subject_id
+      LEFT JOIN exams e ON s.id = e.subject_id
       WHERE 1=1
     `;
     const params: any[] = [];
 
     if (!isAdminUser) {
-      queryText += ' AND is_active = TRUE';
+      queryText += ' AND s.is_active = TRUE';
     }
 
-    if (version === 'bangla') {
-      queryText += " AND (curriculum_version = 'bangla' OR curriculum_version IS NULL)";
-    } else if (version === 'english') {
-      queryText += " AND curriculum_version = 'english'";
-    } else if (version === 'british') {
-      queryText += " AND curriculum_version = 'british'";
-    } else if (version === 'ib') {
-      queryText += " AND curriculum_version = 'ib'";
+    if (version) {
+      if (version === 'bangla') {
+        queryText += " AND (s.curriculum_version = 'bangla' OR s.curriculum_version IS NULL)";
+      } else {
+        params.push(version);
+        queryText += ` AND s.curriculum_version = $${params.length}`;
+      }
     }
 
     if (level) {
       params.push(level);
-      queryText += ` AND (academic_level = $${params.length} OR academic_level IS NULL)`;
+      queryText += ` AND (s.academic_level = $${params.length} OR s.academic_level IS NULL)`;
     }
 
     const includeCommon = req.query?.include_common === 'true';
     if (stream && ['science', 'commerce', 'humanities', 'common', 'optional'].includes(stream)) {
       params.push(stream);
       if (includeCommon && stream !== 'common') {
-        queryText += ` AND (stream = $${params.length} OR stream LIKE '%' || $${params.length} || '%' OR stream = 'common')`;
+        queryText += ` AND (s.stream = $${params.length} OR s.stream LIKE '%' || $${params.length} || '%' OR s.stream = 'common')`;
       } else {
-        queryText += ` AND (stream = $${params.length} OR stream LIKE '%' || $${params.length} || '%')`;
+        queryText += ` AND (s.stream = $${params.length} OR s.stream LIKE '%' || $${params.length} || '%')`;
       }
     }
 
-    queryText += ' ORDER BY stream ASC, name ASC';
+    queryText += ' GROUP BY s.id ORDER BY s.curriculum_version ASC, s.academic_level ASC, s.stream ASC, s.name ASC';
 
     const result = await pool.query(queryText, params);
     res.json(result.rows);
@@ -896,6 +899,84 @@ app.get('/api/subjects/:subjectId/chapters', async (req: Request, res: Response)
   }
 });
 
+// Admin: Create chapter for a subject
+app.post('/api/subjects/:subjectId/chapters', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { subjectId } = req.params;
+    const { title, titleBn, chapterNumber, description, serialNumber } = req.body;
+    if (!title && !titleBn) {
+      return res.status(400).json({ message: 'Chapter title is required.' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO chapters (subject_id, chapter_number, title, title_bn, description, serial_number)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, subject_id as "subjectId", chapter_number as "chapterNumber",
+                 title, title_bn as "titleBn", description, serial_number as "serialNumber"`,
+      [
+        subjectId,
+        Number(chapterNumber) || 1,
+        title?.trim() || titleBn?.trim(),
+        titleBn?.trim() || title?.trim(),
+        description?.trim() || '',
+        Number(serialNumber) || Number(chapterNumber) || 1,
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Create chapter error:', error);
+    res.status(500).json({ message: 'Failed to create chapter.' });
+  }
+});
+
+// Admin: Update chapter
+app.put('/api/chapters/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { title, titleBn, chapterNumber, description, serialNumber } = req.body;
+
+    const result = await pool.query(
+      `UPDATE chapters
+       SET title = COALESCE($1, title),
+           title_bn = COALESCE($2, title_bn),
+           chapter_number = COALESCE($3, chapter_number),
+           description = COALESCE($4, description),
+           serial_number = COALESCE($5, serial_number),
+           updated_at = NOW()
+       WHERE id = $6
+       RETURNING id, subject_id as "subjectId", chapter_number as "chapterNumber",
+                 title, title_bn as "titleBn", description, serial_number as "serialNumber"`,
+      [
+        title?.trim(),
+        titleBn?.trim(),
+        chapterNumber !== undefined ? Number(chapterNumber) : undefined,
+        description,
+        serialNumber !== undefined ? Number(serialNumber) : undefined,
+        id,
+      ]
+    );
+
+    if (result.rowCount === 0) return res.status(404).json({ message: 'Chapter not found.' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Update chapter error:', error);
+    res.status(500).json({ message: 'Failed to update chapter.' });
+  }
+});
+
+// Admin: Delete chapter
+app.delete('/api/chapters/:id', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query('DELETE FROM chapters WHERE id = $1', [id]);
+    if (result.rowCount === 0) return res.status(404).json({ message: 'Chapter not found.' });
+    res.json({ success: true, message: 'Chapter deleted successfully.' });
+  } catch (error) {
+    console.error('Delete chapter error:', error);
+    res.status(500).json({ message: 'Failed to delete chapter.' });
+  }
+});
+
 // Get exams (optionally filtered by subjectId, chapterId, academicLevel, examType)
 app.get('/api/exams', optionalAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -910,9 +991,11 @@ app.get('/api/exams', optionalAuth, async (req: AuthenticatedRequest, res: Respo
              e.curriculum_version as "curriculumVersion", e.academic_level as "academicLevel",
              e.exam_type as "examType", e.board_name as "boardName", e.exam_year as "examYear",
              e.created_at as "createdAt",
-             s.name_bn as "subjectNameBn", s.name as "subjectName", s.stream as "subjectStream"
+             s.name_bn as "subjectNameBn", s.name as "subjectName", s.stream as "subjectStream",
+             c.title as "chapterTitle", c.title_bn as "chapterTitleBn", c.chapter_number as "chapterNumber"
       FROM exams e
       JOIN subjects s ON e.subject_id = s.id
+      LEFT JOIN chapters c ON e.chapter_id = c.id
       WHERE 1=1
     `;
     const params: any[] = [];
@@ -990,35 +1073,90 @@ app.get('/api/exams/:id', async (req: Request, res: Response) => {
 
 app.post('/api/exams', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { subjectId, title, serialNumber, durationMinutes, totalMarks, negativeMark, instructions, isPublished } = req.body;
+    const {
+      subjectId,
+      title,
+      serialNumber,
+      durationMinutes,
+      totalMarks,
+      negativeMark,
+      instructions,
+      isPublished,
+      examType,
+      boardName,
+      examYear,
+      chapterId,
+      curriculumVersion,
+      academicLevel,
+    } = req.body;
     if (!subjectId || !title) return res.status(400).json({ message: 'Subject and title are required.' });
 
+    let finalCurriculum = curriculumVersion;
+    let finalLevel = academicLevel;
+    if (!finalCurriculum || !finalLevel) {
+      const subRes = await pool.query('SELECT curriculum_version, academic_level FROM subjects WHERE id = $1', [subjectId]);
+      if (subRes.rowCount && subRes.rowCount > 0) {
+        finalCurriculum = finalCurriculum || subRes.rows[0].curriculum_version || 'bangla';
+        finalLevel = finalLevel || subRes.rows[0].academic_level || 'hsc';
+      }
+    }
+
     const result = await pool.query(
-      `INSERT INTO exams (subject_id, title, serial_number, duration_minutes, total_marks, negative_mark, instructions, is_published)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO exams (
+         subject_id, title, serial_number, duration_minutes, total_marks, negative_mark,
+         instructions, is_published, exam_type, board_name, exam_year, chapter_id,
+         curriculum_version, academic_level
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING id, subject_id as "subjectId", title, serial_number as "serialNumber",
                  duration_minutes as "durationMinutes", total_marks as "totalMarks",
-                 negative_mark as "negativeMark", instructions, is_published as "isPublished"`,
+                 negative_mark as "negativeMark", instructions, is_published as "isPublished",
+                 exam_type as "examType", board_name as "boardName", exam_year as "examYear",
+                 chapter_id as "chapterId", curriculum_version as "curriculumVersion",
+                 academic_level as "academicLevel"`,
       [
         subjectId,
         title.trim(),
         Number(serialNumber) || 1,
         Number(durationMinutes) || 30,
         Number(totalMarks) || 25,
-        Number(negativeMark) || 0.25,
+        Number(negativeMark) !== undefined ? Number(negativeMark) : 0.25,
         instructions || '',
         Boolean(isPublished),
+        examType || 'model_test',
+        boardName ? String(boardName).trim() : null,
+        examYear ? Number(examYear) : null,
+        chapterId || null,
+        finalCurriculum || 'bangla',
+        finalLevel || 'hsc',
       ]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
+    console.error('Create exam error:', error);
     res.status(500).json({ message: 'Failed to create exam.' });
   }
 });
 
 app.put('/api/exams/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { subjectId, title, serialNumber, durationMinutes, totalMarks, negativeMark, instructions, isPublished } = req.body;
+    const {
+      subjectId,
+      title,
+      serialNumber,
+      durationMinutes,
+      totalMarks,
+      negativeMark,
+      instructions,
+      isPublished,
+      examType,
+      boardName,
+      examYear,
+      chapterId,
+      curriculumVersion,
+      academicLevel,
+    } = req.body;
+
     const result = await pool.query(
       `UPDATE exams
        SET subject_id = COALESCE($1, subject_id),
@@ -1029,11 +1167,20 @@ app.put('/api/exams/:id', requireAdmin, async (req: Request, res: Response) => {
            negative_mark = COALESCE($6, negative_mark),
            instructions = COALESCE($7, instructions),
            is_published = COALESCE($8, is_published),
+           exam_type = COALESCE($9, exam_type),
+           board_name = CASE WHEN $10::text IS NOT NULL THEN $10 ELSE board_name END,
+           exam_year = CASE WHEN $11::int IS NOT NULL THEN $11 ELSE exam_year END,
+           chapter_id = CASE WHEN $12::uuid IS NOT NULL THEN $12 ELSE chapter_id END,
+           curriculum_version = COALESCE($13, curriculum_version),
+           academic_level = COALESCE($14, academic_level),
            updated_at = NOW()
-       WHERE id = $9
+       WHERE id = $15
        RETURNING id, subject_id as "subjectId", title, serial_number as "serialNumber",
                  duration_minutes as "durationMinutes", total_marks as "totalMarks",
-                 negative_mark as "negativeMark", instructions, is_published as "isPublished"`,
+                 negative_mark as "negativeMark", instructions, is_published as "isPublished",
+                 exam_type as "examType", board_name as "boardName", exam_year as "examYear",
+                 chapter_id as "chapterId", curriculum_version as "curriculumVersion",
+                 academic_level as "academicLevel"`,
       [
         subjectId,
         title?.trim(),
@@ -1043,12 +1190,19 @@ app.put('/api/exams/:id', requireAdmin, async (req: Request, res: Response) => {
         negativeMark !== undefined ? Number(negativeMark) : undefined,
         instructions,
         isPublished,
+        examType,
+        boardName ? String(boardName).trim() : null,
+        examYear ? Number(examYear) : null,
+        chapterId || null,
+        curriculumVersion,
+        academicLevel,
         req.params.id,
       ]
     );
     if (result.rowCount === 0) return res.status(404).json({ message: 'Exam not found.' });
     res.json(result.rows[0]);
   } catch (error) {
+    console.error('Update exam error:', error);
     res.status(500).json({ message: 'Failed to update exam.' });
   }
 });
