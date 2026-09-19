@@ -124,8 +124,23 @@ log_server "Starting Express backend on port 8787..."
 npm run dev:server 2>&1 | sed "s/^/$(echo -e "${CLR_CYAN}[SERVER]${CLR_RESET} ")/" &
 SERVER_PID=$!
 
-# Wait briefly for backend to initialize
-sleep 1.5
+# Wait for backend to be ready (poll port 8787 up to 90s)
+log_info "Waiting for backend to be ready on :8787..."
+MAX_WAIT=90
+WAITED=0
+until nc -z 127.0.0.1 8787 2>/dev/null; do
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    log_err "Backend process died unexpectedly. Check server logs."
+    exit 1
+  fi
+  if [ "$WAITED" -ge "$MAX_WAIT" ]; then
+    log_err "Backend did not start within ${MAX_WAIT}s. Starting client anyway..."
+    break
+  fi
+  sleep 1
+  WAITED=$((WAITED + 1))
+done
+log_server "✅ Backend is ready! (${WAITED}s)"
 
 # 7. Start frontend client
 log_client "Starting Vite client on port 3000..."

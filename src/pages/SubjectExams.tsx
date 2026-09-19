@@ -599,7 +599,9 @@ const SubjectExams = () => {
                       return (
                         c.titleBn?.toLowerCase().includes(q) ||
                         c.title?.toLowerCase().includes(q) ||
-                        `অধ্যায় ${c.chapterNumber}`.includes(q)
+                        `অধ্যায় ${c.chapterNumber}`.includes(q) ||
+                        `chapter ${c.chapterNumber}`.includes(q) ||
+                        `topic ${c.chapterNumber}`.includes(q)
                       );
                     })
                     .map((ch) => {
@@ -610,6 +612,11 @@ const SubjectExams = () => {
                           ((e.examType || 'model_test') === 'model_test' &&
                             e.serialNumber === ch.chapterNumber)
                       );
+
+                      const isBritishOrCambridge = version === 'british' || version === 'cambridge';
+                      const chapterPrefix = isEnglishUi
+                        ? (isBritishOrCambridge ? 'Topic' : 'Chapter')
+                        : 'অধ্যায়';
 
                       return (
                         <div
@@ -622,18 +629,22 @@ const SubjectExams = () => {
                               <div className="space-y-1.5">
                                 <div className="flex items-center gap-2">
                                   <Badge className="bg-blue-600 text-white border-none font-bold text-xs px-2.5 py-0.5">
-                                    {isEnglishUi
-                                      ? `Chapter ${ch.chapterNumber.toString().padStart(2, '0')}`
-                                      : `অধ্যায় ${ch.chapterNumber.toString().padStart(2, '0')}`}
+                                    {`${chapterPrefix} ${ch.chapterNumber.toString().padStart(2, '0')}`}
                                   </Badge>
                                   <span className="text-xs text-slate-400 font-medium">
-                                    NCTB পাঠ্যক্রম
+                                    {isEnglishUi
+                                      ? (isBritishOrCambridge
+                                          ? 'Cambridge / Edexcel'
+                                          : version === 'ib'
+                                          ? 'IB Curriculum'
+                                          : 'NCTB English Version')
+                                      : 'NCTB পাঠ্যক্রম'}
                                   </span>
                                 </div>
                                 <h3 className="text-xl sm:text-2xl font-bold font-bengali text-slate-900 tracking-tight">
-                                  {ch.titleBn || ch.title}
+                                  {isEnglishUi ? ch.title : (ch.titleBn || ch.title)}
                                 </h3>
-                                {ch.title && (
+                                {!isEnglishUi && ch.title && ch.title !== ch.titleBn && (
                                   <p className="text-xs sm:text-sm text-slate-500 font-sans">
                                     {ch.title}
                                   </p>
@@ -643,7 +654,9 @@ const SubjectExams = () => {
                               <div className="flex items-center gap-2 shrink-0">
                                 <Badge variant="secondary" className="bg-blue-50 text-blue-700 border border-blue-200/60 font-bold text-xs px-3 py-1">
                                   <Sparkles className="w-3.5 h-3.5 mr-1 text-blue-600" />
-                                  {chapterExams.length}টি মডেল টেস্ট
+                                  {isEnglishUi
+                                    ? `${chapterExams.length} ${chapterExams.length === 1 ? 'Model Test' : 'Model Tests'}`
+                                    : `${chapterExams.length}টি মডেল টেস্ট`}
                                 </Badge>
                               </div>
                             </div>
@@ -742,8 +755,10 @@ const SubjectExams = () => {
                                 );
                               })
                             ) : (
-                              <div className="p-4 rounded-2xl border border-dashed border-slate-200 text-center text-xs text-slate-400 font-bengali">
-                                এই অধ্যায়ের নতুন মডেল টেস্ট শীঘ্রই প্রকাশ করা হবে।
+                              <div className="p-4 rounded-2xl border border-dashed border-slate-200 text-center text-xs text-slate-400 font-sans">
+                                {isEnglishUi
+                                  ? 'New model tests for this chapter will be published soon.'
+                                  : 'এই অধ্যায়ের নতুন মডেল টেস্ট শীঘ্রই প্রকাশ করা হবে।'}
                               </div>
                             )}
                           </div>
@@ -753,8 +768,8 @@ const SubjectExams = () => {
                 ) : (
                   <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center">
                     <AlertCircle className="mx-auto mb-3 h-10 w-10 text-slate-300" />
-                    <p className="text-base font-bold text-slate-600 font-bengali">
-                      অধ্যায় তালিকা প্রস্তুত হচ্ছে...
+                    <p className="text-base font-bold text-slate-600 font-sans">
+                      {isEnglishUi ? 'Loading chapters...' : 'অধ্যায় তালিকা প্রস্তুত হচ্ছে...'}
                     </p>
                   </div>
                 )}
@@ -868,8 +883,10 @@ const SubjectExams = () => {
                 ) : (
                   <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center">
                     <AlertCircle className="mx-auto mb-3 h-10 w-10 text-slate-300" />
-                    <p className="text-base font-bold text-slate-600 font-bengali">
-                      এই বিষয়ের জন্য এখনো কোনো বোর্ড প্রশ্ন পাওয়া যায়নি।
+                    <p className="text-base font-bold text-slate-600 font-sans">
+                      {isEnglishUi
+                        ? 'No past papers found for this subject yet.'
+                        : 'এই বিষয়ের জন্য এখনো কোনো বোর্ড প্রশ্ন পাওয়া যায়নি।'}
                     </p>
                   </div>
                 )}
@@ -975,8 +992,8 @@ const SubjectExams = () => {
                 ) : (
                   <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center">
                     <AlertCircle className="mx-auto mb-3 h-10 w-10 text-slate-300" />
-                    <p className="text-base font-bold text-slate-600 font-bengali">
-                      কোনো পরীক্ষা পাওয়া যায়নি।
+                    <p className="text-base font-bold text-slate-600 font-sans">
+                      {isEnglishUi ? 'No tests found.' : 'কোনো পরীক্ষা পাওয়া যায়নি।'}
                     </p>
                   </div>
                 )}
@@ -1189,8 +1206,8 @@ const SubjectExams = () => {
                   <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">
                     Subject
                   </p>
-                  <h3 className="mt-1.5 text-lg font-bold text-slate-900 font-bengali">
-                    {subject?.nameBn}
+                  <h3 className="mt-1.5 text-lg font-bold text-slate-900 font-sans">
+                    {isEnglishUi ? subject?.name : (subject?.nameBn || subject?.name)}
                   </h3>
                   <p className="mt-1.5 text-[11px] text-slate-500">
                     {selectedExam
